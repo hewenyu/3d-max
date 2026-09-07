@@ -1,7 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DiamondPlus, LockKeyhole, Trash2, UnlockKeyhole } from 'lucide-react';
 import type { ActorPose, Attachment, ObjectKeyframe, Project, SceneObject, Vec3 } from '../../shared/types';
 import { sampleObject } from '../../shared/timeline';
+import { ModelingPanel } from './ModelingPanel';
+import { ModelAssetPanel } from './ModelAssetPanel';
+import { ActorAnimationPanel } from './ActorAnimationPanel';
+import { FacePanel } from './FacePanel';
+import type { ActorConstraintResult } from '../../shared/actor-animation';
+import { MotionPanel } from './MotionPanel';
+import { PhysicsPanel } from './PhysicsPanel';
 import type { EditorActions } from '../useEditor';
 import { Field, IconButton, NumberInput, Section, TextInput, VectorInput, timecode } from './Controls';
 
@@ -11,14 +18,27 @@ export function ObjectInspector({
   sourceTime,
   editor,
   onSeek,
+  getConstraints,
 }: {
   object: SceneObject;
   project: Project;
   sourceTime: number;
   editor: EditorActions;
   onSeek: (time: number) => void;
+  getConstraints?: (id: string) => ActorConstraintResult[];
 }) {
   const [mode, setMode] = useState<'base' | 'keyframe'>('base');
+  const [diagnostics, setDiagnostics] = useState<ActorConstraintResult[]>([]);
+  useEffect(() => {
+    if (!object.actor || !getConstraints) return;
+    const refresh = () => setDiagnostics(getConstraints(object.id));
+    const first = requestAnimationFrame(refresh);
+    const interval = setInterval(refresh, 200);
+    return () => {
+      cancelAnimationFrame(first);
+      clearInterval(interval);
+    };
+  }, [object.id, object.actor, getConstraints]);
   const current = mode === 'keyframe' ? sampleObject(object, sourceTime) : object;
   const latestObject = (latest: Project) => {
     const target = latest.objects.find((item) => item.id === object.id);
@@ -103,6 +123,7 @@ export function ObjectInspector({
   };
   return (
     <>
+      {object.type === 'model' && <ModelAssetPanel object={object} project={project} editor={editor} />}
       <Section
         title="对象"
         extra={
@@ -119,6 +140,7 @@ export function ObjectInspector({
           </Field>
           <Field label="父级">
             <select
+              aria-label="对象父级"
               value={object.parentId ?? ''}
               onChange={(e) => baseUpdate({ parentId: e.target.value || null })}
             >
@@ -173,12 +195,14 @@ export function ObjectInspector({
             onChange={(scale) => transform({ scale })}
             onAxisChange={(axis, value) => vectorAxis('scale', axis, value)}
           />
-          <VectorInput
-            label="尺寸 · m"
-            value={object.dimensions}
-            onChange={(dimensions) => baseUpdate({ dimensions })}
-            onAxisChange={(axis, value) => vectorAxis('dimensions', axis, value)}
-          />
+          {!object.modeling && (
+            <VectorInput
+              label="尺寸 · m"
+              value={object.dimensions}
+              onChange={(dimensions) => baseUpdate({ dimensions })}
+              onAxisChange={(axis, value) => vectorAxis('dimensions', axis, value)}
+            />
+          )}
           <Field label="白模色阶">
             <div className="swatches">
               {['#f2f1ee', '#d9dcda', '#adb5b5', '#767d80', '#42494a'].map((tone) => (
@@ -195,6 +219,11 @@ export function ObjectInspector({
           </Field>
         </fieldset>
       </Section>
+      {!current.actor && object.type !== 'group' && !object.vehicle && !object.effect && (
+        <ModelingPanel object={object} project={project} editor={editor} />
+      )}
+      <MotionPanel object={object} editor={editor} sourceTime={sourceTime} />
+      <PhysicsPanel object={object} project={project} editor={editor} sourceTime={sourceTime} />
       {current.actor && (
         <Section title="表演与注视">
           <fieldset disabled={object.locked}>
@@ -257,6 +286,18 @@ export function ObjectInspector({
             ))}
           </fieldset>
         </Section>
+      )}
+      {object.actor && (
+        <ActorAnimationPanel
+          object={object}
+          project={project}
+          editor={editor}
+          time={sourceTime}
+          diagnostics={diagnostics}
+        />
+      )}
+      {(object.actor || object.type === 'model') && (
+        <FacePanel object={object} project={project} time={sourceTime} editor={editor} onSeek={onSeek} />
       )}
       {object.type !== 'actor' && (
         <Section title="道具附着" defaultOpen={!!current.attachment}>

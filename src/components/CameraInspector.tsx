@@ -1,17 +1,24 @@
 import { Camera, DiamondPlus, LockKeyhole, Trash2, UnlockKeyhole } from 'lucide-react';
 import { useState } from 'react';
-import type { Project, Shot, ShotCamera, Vec3 } from '../../shared/types';
-import { sampleCamera, sampleObject } from '../../shared/timeline';
+import type { Project, SequenceClip, Shot, ShotCamera, Vec3 } from '../../shared/types';
+import { sampleCamera } from '../../shared/timeline';
+import type { CameraPresetKind } from '../../shared/camera-presets';
 import type { EditorActions } from '../useEditor';
 import { Field, IconButton, NumberInput, Section, TextInput, VectorInput, timecode } from './Controls';
 import { CameraMotionPanel } from './CameraMotionPanel';
+import { ShotBindingPanel } from './ShotBindingPanel';
+import { aspectComposition, type CameraComposition } from '../../shared/camera-optics';
+import { CameraOpticsPanel } from './CameraOpticsPanel';
+import { ShotLightingPanel } from './LightingPlansPanel';
 
 interface Props {
   project: Project;
   camera: ShotCamera;
   shot?: Shot | null;
+  clip?: SequenceClip | null;
   editor: EditorActions;
   sourceTime: number;
+  subjectTime?: number;
   onSeek: (time: number) => void;
   getView: () => { position: Vec3; target: Vec3; fov: number } | undefined;
   getTarget?: (id: string) => Vec3 | undefined;
@@ -21,18 +28,21 @@ export function CameraInspector({
   project,
   camera,
   shot,
+  clip,
   editor,
   sourceTime,
+  subjectTime = sourceTime,
   onSeek,
   getView,
-  getTarget,
 }: Props) {
   const [mode, setMode] = useState<'base' | 'keyframe'>('base');
-  const current = mode === 'base' ? camera : sampleCamera(camera, sourceTime);
+  const aspect = project.settings.aspect;
+  const editingCamera = aspectComposition(camera, aspect);
+  const current = mode === 'base' ? editingCamera : sampleCamera(camera, sourceTime, aspect);
   const shotLocked = project.shots.some((item) => item.cameraId === camera.id && item.locked);
   const locked = camera.locked || shotLocked;
   const update = (patch: Partial<ShotCamera>) => {
-    if (mode === 'base') editor.run('camera.update', { id: camera.id, patch });
+    if (mode === 'base') editor.run((latest) => [baseCommand(latest, patch)]);
     else setFrame(patch);
   };
   const setFrame = (patch: Partial<ShotCamera> = {}) => {
@@ -45,14 +55,16 @@ export function CameraInspector({
   };
   const frameCommand = (latest: Project, patch: Partial<ShotCamera>) => {
     const target = latestCamera(latest);
-    const sampled = sampleCamera(target, sourceTime);
-    const existing = target.keyframes.find(
+    const view = aspectComposition(target, aspect);
+    const sampled = sampleCamera(target, sourceTime, aspect);
+    const existing = view.keyframes.find(
       (frame) => Math.abs(frame.time - sourceTime) < 0.5 / latest.settings.fps,
     );
     return {
       type: 'camera.keyframe.set',
       payload: {
         id: camera.id,
+        ...(target.compositions?.[aspect] ? { aspect } : {}),
         keyframe: {
           ...existing,
           id: existing?.id ?? crypto.randomUUID(),
@@ -66,40 +78,37 @@ export function CameraInspector({
       },
     };
   };
+  const baseCommand = (latest: Project, patch: Partial<CameraComposition>) => {
+    const target = latestCamera(latest);
+    const composition = target.compositions?.[aspect];
+    return composition
+      ? {
+          type: 'camera.composition.set',
+          payload: { id: camera.id, aspect, composition: { ...composition, ...patch } },
+        }
+      : { type: 'camera.update', payload: { id: camera.id, patch } };
+  };
   const vectorAxis = (field: 'position' | 'target', axis: number, value: number) => {
     editor.run((latest) => {
       const target = latestCamera(latest);
-      const sampled = mode === 'base' ? target : sampleCamera(target, sourceTime);
+      const sampled =
+        mode === 'base' ? aspectComposition(target, aspect) : sampleCamera(target, sourceTime, aspect);
       const vector = [...sampled[field]] as Vec3;
       vector[axis] = value;
       const patch = { [field]: vector };
-      return [
-        mode === 'base'
-          ? { type: 'camera.update', payload: { id: camera.id, patch } }
-          : frameCommand(latest, patch),
-      ];
+      return [mode === 'base' ? baseCommand(latest, patch) : frameCommand(latest, patch)];
     });
   };
-  const preset = (kind: string) => {
-    let target = [...current.target] as Vec3;
-    const subject = project.objects.find((object) => object.id === shot?.subjectIds[0]);
-    if (subject) {
-      const sampled = sampleObject(subject, sourceTime);
-      target = getTarget?.(subject.id) ?? [
-        sampled.position[0],
-        sampled.position[1] + sampled.dimensions[1] * sampled.scale[1] * 0.75,
-        sampled.position[2],
-      ];
-    }
-    const distances: Record<string, number> = { wide: 8, medium: 4, close: 2, detail: 0.8, high: 6, low: 4 };
-    const distance = distances[kind] ?? 4;
-    const position: Vec3 = [
-      target[0] + distance * 0.35,
-      kind === 'high' ? target[1] + 6 : kind === 'low' ? target[1] - 1 : target[1] + 0.15,
-      target[2] + distance,
-    ];
-    update({ position, target, fov: kind === 'wide' ? 52 : 40 });
-  };
+  const preset = (kind: CameraPresetKind) =>
+    editor.run('camera.preset', {
+      id: camera.id,
+      preset: kind,
+      ...(shot ? { shotId: shot.id } : {}),
+      sourceTime: subjectTime,
+      cameraTime: sourceTime,
+      mode,
+      ...(camera.compositions?.[aspect] ? { aspect } : {}),
+    });
   const referencedClips = project.sequences
     .flatMap((sequence) => sequence.clips)
     .filter((clip) => clip.shotId === shot?.id);
@@ -115,6 +124,8 @@ export function CameraInspector({
 
   return (
     <>
+      {shot && <ShotBindingPanel project={project} shot={shot} editor={editor} />}
+      {shot && <ShotLightingPanel project={project} shot={shot} editor={editor} />}
       <Section
         title="摄影机"
         extra={
@@ -186,21 +197,33 @@ export function CameraInspector({
         project={project}
         camera={camera}
         shot={shot}
+        clip={clip}
         sourceTime={sourceTime}
         locked={locked}
         editor={editor}
       />
+      <CameraOpticsPanel
+        camera={camera}
+        project={project}
+        editor={editor}
+        time={sourceTime}
+        onSeek={onSeek}
+        locked={locked}
+      />
       <Section title="构图预设">
         <div className="preset-grid">
           {[
+            ['extreme_wide', '大远景'],
             ['wide', '全景'],
             ['medium', '中景'],
             ['close', '近景'],
             ['detail', '特写'],
             ['high', '俯拍'],
             ['low', '仰拍'],
+            ['two_shot', '双人'],
+            ['over_shoulder', '过肩'],
           ].map(([key, label]) => (
-            <button key={key} onClick={() => preset(key)} disabled={locked}>
+            <button key={key} onClick={() => preset(key as CameraPresetKind)} disabled={locked}>
               <Camera size={14} />
               {label}
             </button>
@@ -291,8 +314,8 @@ export function CameraInspector({
         }
       >
         <div className="keyframe-list">
-          {!camera.keyframes.length && <span className="muted small">固定机位</span>}
-          {camera.keyframes.map((frame) => (
+          {!editingCamera.keyframes.length && <span className="muted small">固定机位</span>}
+          {editingCamera.keyframes.map((frame) => (
             <div key={frame.id}>
               <button
                 className="keyframe-link"
@@ -311,6 +334,7 @@ export function CameraInspector({
                 onChange={(event) =>
                   editor.run('camera.keyframe.set', {
                     id: camera.id,
+                    ...(camera.compositions?.[aspect] ? { aspect } : {}),
                     keyframe: { ...frame, easing: event.target.value },
                   })
                 }
@@ -323,7 +347,13 @@ export function CameraInspector({
                 icon={Trash2}
                 label="删除摄影机关键帧"
                 disabled={locked}
-                onClick={() => editor.run('camera.keyframe.delete', { id: camera.id, keyframeId: frame.id })}
+                onClick={() =>
+                  editor.run('camera.keyframe.delete', {
+                    id: camera.id,
+                    keyframeId: frame.id,
+                    ...(camera.compositions?.[aspect] ? { aspect } : {}),
+                  })
+                }
               />
             </div>
           ))}

@@ -1,4 +1,11 @@
-import type { Command, CommandResponse, Project, RenderJob, RenderOptions } from '../shared/types';
+import type {
+  Command,
+  CommandRequest,
+  CommandResponse,
+  Project,
+  RenderJob,
+  RenderOptions,
+} from '../shared/types';
 
 export class ApiError extends Error {
   constructor(
@@ -30,10 +37,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getProject = () => api<Project>('/project');
-export const execute = (commands: Command[], revision: number, projectId: string) =>
+export const execute = (
+  commands: Command[],
+  revision: number,
+  projectId: string,
+  expectedContext?: CommandRequest['expectedContext'],
+) =>
   api<CommandResponse>('/commands', {
     method: 'POST',
-    body: JSON.stringify({ commands, projectId, expectedRevision: revision, requestId: crypto.randomUUID() }),
+    body: JSON.stringify({
+      commands,
+      projectId,
+      expectedRevision: revision,
+      expectedContext,
+      requestId: crypto.randomUUID(),
+    }),
   });
 export const startRender = (options: RenderOptions) =>
   api<RenderJob>('/renders', { method: 'POST', body: JSON.stringify(options) });

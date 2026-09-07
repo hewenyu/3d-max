@@ -83,7 +83,8 @@ test('director notes, beat timing, project navigation and render configuration a
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: 'MCP', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'MCP 连接' })).toBeVisible();
-  await expect(page.locator('.code-config')).toContainText('http://127.0.0.1:4180/mcp');
+  const connection: { url: string } = await (await request.get('/api/connection')).json();
+  await expect(page.locator('.code-config')).toContainText(connection.url);
   await page.getByRole('button', { name: 'stdio', exact: true }).click();
   await expect(page.locator('.code-config')).toContainText('WHITEFRAME_API_URL');
   await page.getByRole('button', { name: '关闭', exact: true }).click();

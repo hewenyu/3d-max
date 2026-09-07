@@ -2,6 +2,9 @@
 
 ## Completion Criteria
 
+- The active full-delivery objective is preserved verbatim in `docs/full-goal.md`. Track every requirement in `docs/full-delivery-matrix.md`; the historical first-version PRD and delivery plan do not reduce this objective.
+- Completion requires four editable projects and four genuinely produced videos: martial arts, racing, space combat, and travel scenery. Each video must be at least 120 seconds, 720p, 24 fps, with actual in-app playback, downloads, full viewing review, and ffprobe evidence. Do not pad duration with static frames or repeated clips.
+- Implement missing reusable product capabilities exposed by these productions. Do not use demo-only code or an alternative renderer to bypass the product. Do not mark the goal complete while any full-delivery requirement remains incomplete or unverified.
 - Deliver the Web 3D director previs editor, real MCP controls, and white-model MP4 export described in `docs/product-requirements.md`.
 - The workflow ends at white-model video export. Do not integrate downstream AI video generation.
 - Store business data in SQLite, including projects, history, render jobs, and asset metadata. Binary assets and videos may live on disk with database references.

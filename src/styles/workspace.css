@@ -126,6 +126,43 @@
 .right-tools {
   justify-content: flex-end;
 }
+.viewport-tools-menu {
+  display: none;
+  position: relative;
+}
+.viewport-tools-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  width: 208px;
+  max-height: min(560px, calc(100dvh - 145px));
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0005;
+}
+.viewport-tools-popover > button {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  text-align: left;
+}
+.viewport-tools-popover > button:hover,
+.viewport-tools-popover > button:focus-visible {
+  background: var(--surface);
+}
+.viewport-tools-popover > button > span {
+  flex: 1;
+}
 .tool-divider {
   width: 1px;
   height: 17px;
@@ -394,7 +431,7 @@
 @media (max-width: 520px) {
   .workspace-toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 64px;
+    grid-template-columns: minmax(0, 1fr) 96px;
     gap: 3px;
     overflow: visible;
   }
@@ -410,9 +447,12 @@
     gap: 4px;
     font-size: 10px;
   }
-  .workspace-toolbar .right-tools > .icon-button:nth-child(-n + 3),
+  .workspace-toolbar .right-tools > .desktop-viewport-tool,
   .workspace-toolbar .right-tools > .tool-divider {
     display: none;
+  }
+  .viewport-tools-menu {
+    display: block;
   }
   .brand strong {
     font-size: 15px;

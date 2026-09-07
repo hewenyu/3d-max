@@ -9,7 +9,7 @@ test('development rendering follows Vite despite a saved production build and re
   const directory = await mkdtemp(join(tmpdir(), 'whiteframe-config-'));
   const previousDirectory = process.cwd();
   const previousArguments = process.argv;
-  const keys = ['APP_URL', 'PORT', 'WEB_PORT'] as const;
+  const keys = ['APP_URL', 'PORT', 'WEB_PORT', 'WHITEFRAME_DIST_DIR'] as const;
   const environment = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   try {
     process.chdir(directory);
@@ -32,6 +32,12 @@ test('development rendering follows Vite despite a saved production build and re
     delete process.env.APP_URL;
     await rm(join(directory, 'dist'), { recursive: true });
     assert.equal(getConfig().appUrl, 'http://127.0.0.1:5273');
+    const immutableBuild = join(directory, 'render-release');
+    await mkdir(immutableBuild);
+    await writeFile(join(immutableBuild, 'index.html'), '<!doctype html>');
+    process.env.WHITEFRAME_DIST_DIR = immutableBuild;
+    assert.equal(getConfig().distDir, immutableBuild);
+    assert.equal(getConfig().appUrl, 'http://127.0.0.1:4273');
   } finally {
     process.chdir(previousDirectory);
     process.argv = previousArguments;

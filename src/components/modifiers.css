@@ -1,0 +1,38 @@
+.modifier-panel {
+  margin: 16px 0;
+  border-top: 1px solid #414a4c;
+  padding-top: 12px;
+}
+.modifier-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 11px;
+}
+.modifier-heading > span:first-of-type {
+  flex: 1;
+}
+.modifier-heading .icon-button {
+  width: 26px;
+  height: 28px;
+  flex: 0 0 26px;
+}
+.modifier-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.modifier-item {
+  padding: 8px 0;
+  border-top: 1px solid #414a4c;
+}
+.modifier-item > .modifier-heading {
+  margin-bottom: 8px;
+}
+.modifier-item > .row {
+  margin: 8px 0;
+  font-size: 11px;
+}

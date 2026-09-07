@@ -12,6 +12,8 @@ import type { AudioClip, Beat, Project, Shot } from '../../shared/types';
 import type { EditorActions } from '../useEditor';
 import { uploadAsset } from '../api';
 import { Field, IconButton, NumberInput, Section, TextInput, timecode } from './Controls';
+import { SynchronizationPanel } from './SynchronizationPanel';
+import { SpeechPanel } from './SpeechPanel';
 
 const beatNames: Record<Beat['kind'], string> = {
   dialogue: '对白',
@@ -42,6 +44,10 @@ export function DirectorPanel({
   const importAudio = async (file?: File) => {
     if (!file) return;
     const projectId = project.id;
+    const expectedContext = {
+      sceneId: project.production?.activeSceneId ?? null,
+      performanceId: project.production?.activePerformanceId ?? null,
+    };
     try {
       const asset = await uploadAsset(file);
       let duration = asset.duration;
@@ -65,7 +71,7 @@ export function DirectorPanel({
           muted: false,
           locked: false,
         },
-        { projectId, staleMessage: '项目已切换，未导入上一项目的音频' },
+        { projectId, expectedContext, staleMessage: '项目已切换，未导入上一项目的音频' },
       );
     } catch (error) {
       editor.setError((error as Error).message);
@@ -150,9 +156,23 @@ export function DirectorPanel({
                   <Field label="开始">
                     <NumberInput
                       value={beat.time}
-                      onChange={(start) => updateBeat(beat.id, { time: start })}
+                      onChange={(start) =>
+                        editor.run((latest) => {
+                          const current = latest.beats.find((item) => item.id === beat.id);
+                          if (!current) throw new Error('剧情节拍已变化，请重新选择');
+                          return [
+                            {
+                              type: 'beat.update',
+                              payload: {
+                                id: beat.id,
+                                patch: { time: start, endTime: start + current.endTime - current.time },
+                              },
+                            },
+                          ];
+                        })
+                      }
                       min={0}
-                      max={beat.endTime}
+                      max={86400 - (beat.endTime - beat.time)}
                       step={1 / project.settings.fps}
                     />
                   </Field>
@@ -206,6 +226,12 @@ export function DirectorPanel({
             event.target.value = '';
           }}
         />
+        <SpeechPanel
+          key={`${project.id}:${project.production?.activeSceneId ?? ''}:${project.production?.activePerformanceId ?? ''}`}
+          project={project}
+          editor={editor}
+          sourceTime={sourceTime}
+        />
         {!project.audio.length && (
           <button className="text-button full-width" onClick={() => fileInput.current?.click()}>
             <AudioLines size={15} />
@@ -252,11 +278,65 @@ export function DirectorPanel({
                 <input
                   type="range"
                   min={0}
-                  max={1}
+                  max={2}
                   step={0.05}
                   value={clip.volume}
                   onChange={(event) => updateAudio(clip.id, { volume: Number(event.target.value) })}
                 />
+              </Field>
+              <Field label="音频源入点">
+                <NumberInput
+                  label={`${clip.name} 音频源入点`}
+                  value={clip.sourceIn}
+                  min={0}
+                  onChange={(sourceIn) => updateAudio(clip.id, { sourceIn })}
+                />
+              </Field>
+              <Field label="音频时长">
+                <NumberInput
+                  label={`${clip.name} 音频时长`}
+                  value={clip.duration}
+                  min={0.01}
+                  onChange={(duration) =>
+                    updateAudio(clip.id, {
+                      duration,
+                      fadeIn: Math.min(clip.fadeIn ?? 0, duration),
+                      fadeOut: Math.min(clip.fadeOut ?? 0, duration),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="淡入">
+                <NumberInput
+                  label={`${clip.name} 音频淡入`}
+                  value={clip.fadeIn ?? 0}
+                  min={0}
+                  max={clip.duration}
+                  step={0.05}
+                  onChange={(fadeIn) => updateAudio(clip.id, { fadeIn })}
+                />
+              </Field>
+              <Field label="淡出">
+                <NumberInput
+                  label={`${clip.name} 音频淡出`}
+                  value={clip.fadeOut ?? 0}
+                  min={0}
+                  max={clip.duration}
+                  step={0.05}
+                  onChange={(fadeOut) => updateAudio(clip.id, { fadeOut })}
+                />
+              </Field>
+              <Field label="淡化曲线">
+                <select
+                  aria-label={`${clip.name} 音频淡化曲线`}
+                  value={clip.fadeCurve ?? 'linear'}
+                  onChange={(event) =>
+                    updateAudio(clip.id, { fadeCurve: event.target.value as AudioClip['fadeCurve'] })
+                  }
+                >
+                  <option value="linear">线性</option>
+                  <option value="equalPower">等功率</option>
+                </select>
               </Field>
               <Field label="静音">
                 <input
@@ -269,6 +349,7 @@ export function DirectorPanel({
           </div>
         ))}
       </Section>
+      <SynchronizationPanel project={project} editor={editor} />
       <Section title="镜头意见">
         <div className="note-composer">
           <textarea

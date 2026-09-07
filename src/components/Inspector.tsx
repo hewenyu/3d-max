@@ -1,17 +1,23 @@
 import { Camera, CircleUserRound, Clapperboard, SlidersHorizontal, Sun, X } from 'lucide-react';
-import type { Project, Shot, Vec3 } from '../../shared/types';
+import type { Project, SequenceClip, Shot, Vec3 } from '../../shared/types';
 import type { EditorActions } from '../useEditor';
 import { ObjectInspector } from './ObjectInspector';
+import { SelectionInspector } from './SelectionInspector';
 import { CameraInspector } from './CameraInspector';
 import { DirectorPanel } from './DirectorPanel';
-import { Empty, Field, IconButton, NumberInput, Section } from './Controls';
+import { Empty, Field, IconButton, Section } from './Controls';
+import { LightingPlansPanel } from './LightingPlansPanel';
+import type { ActorConstraintResult } from '../../shared/actor-animation';
 
 export type InspectorTab = 'shot' | 'object' | 'director' | 'settings';
 export function Inspector({
   project,
   selected,
   shot,
+  clip,
   sourceTime,
+  cameraTime,
+  onCameraSeek,
   time,
   editor,
   tab,
@@ -19,12 +25,17 @@ export function Inspector({
   onSeek,
   getView,
   getTarget,
+  getConstraints,
   onClose,
+  onSelect,
 }: {
   project: Project;
   selected: string[];
   shot: Shot | null;
+  clip?: SequenceClip | null;
   sourceTime: number;
+  cameraTime: number;
+  onCameraSeek: (cameraTime: number) => void;
   time: number;
   editor: EditorActions;
   tab: InspectorTab;
@@ -32,9 +43,12 @@ export function Inspector({
   onSeek: (sourceTime: number) => void;
   getView: () => { position: Vec3; target: Vec3; fov: number } | undefined;
   getTarget: (id: string) => Vec3 | undefined;
+  getConstraints: (id: string) => ActorConstraintResult[];
   onClose: () => void;
+  onSelect: (ids: string[]) => void;
 }) {
   const object = project.objects.find((o) => o.id === selected[0]);
+  const objects = project.objects.filter((item) => selected.includes(item.id));
   const camera =
     tab === 'shot'
       ? project.cameras.find((c) => c.id === shot?.cameraId)
@@ -70,7 +84,9 @@ export function Inspector({
       </div>
       <div className="inspector-content">
         {tab === 'object' &&
-          (object ? (
+          (objects.length > 1 ? (
+            <SelectionInspector objects={objects} editor={editor} onSelect={onSelect} />
+          ) : object ? (
             <ObjectInspector
               key={object.id}
               project={project}
@@ -78,14 +94,17 @@ export function Inspector({
               editor={editor}
               sourceTime={sourceTime}
               onSeek={onSeek}
+              getConstraints={getConstraints}
             />
           ) : camera && project.cameras.some((c) => c.id === selected[0]) ? (
             <CameraInspector
               project={project}
               camera={camera}
+              clip={shot?.cameraId === camera.id ? clip : null}
               editor={editor}
-              sourceTime={sourceTime}
-              onSeek={onSeek}
+              sourceTime={cameraTime}
+              subjectTime={sourceTime}
+              onSeek={onCameraSeek}
               getView={getView}
               getTarget={getTarget}
             />
@@ -99,9 +118,11 @@ export function Inspector({
               project={project}
               camera={camera}
               shot={shot}
+              clip={clip}
               editor={editor}
-              sourceTime={sourceTime}
-              onSeek={onSeek}
+              sourceTime={cameraTime}
+              subjectTime={sourceTime}
+              onSeek={onCameraSeek}
               getView={getView}
               getTarget={getTarget}
             />
@@ -145,27 +166,64 @@ export function Inspector({
               </Field>
             </Section>
             <Section title="基础灯光">
+              <Field label="无限地面">
+                <input
+                  type="checkbox"
+                  aria-label="显示地面"
+                  checked={settings.environment?.ground ?? true}
+                  onChange={(event) =>
+                    editor.run((latest) => [
+                      {
+                        type: 'project.settings',
+                        payload: {
+                          environment: {
+                            background: '#cfd6d3',
+                            groundTone: '#d1d7d3',
+                            ...latest.settings.environment,
+                            ground: event.target.checked,
+                          },
+                        },
+                      },
+                    ])
+                  }
+                />
+              </Field>
               {(
                 [
-                  ['intensity', '主光强度', 0, 10, 0.1],
-                  ['ambient', '环境光', 0, 5, 0.1],
-                  ['azimuth', '方位角', -180, 180, 5],
-                  ['elevation', '高度角', 5, 90, 5],
+                  ['background', '背景颜色', '#cfd6d3'],
+                  ['groundTone', '地面颜色', '#d1d7d3'],
                 ] as const
-              ).map(([key, label, min, max, step]) => (
+              ).map(([key, label, fallback]) => (
                 <Field key={key} label={label}>
-                  <NumberInput
-                    value={settings.lighting[key]}
-                    min={min}
-                    max={max}
-                    step={step}
-                    onChange={(value) =>
-                      editor.run('project.settings', { lighting: { ...settings.lighting, [key]: value } })
+                  <input
+                    type="color"
+                    aria-label={label}
+                    value={settings.environment?.[key] ?? fallback}
+                    onChange={(event) =>
+                      editor.run((latest) => [
+                        {
+                          type: 'project.settings',
+                          payload: {
+                            environment: {
+                              ground: true,
+                              background: '#cfd6d3',
+                              groundTone: '#d1d7d3',
+                              ...latest.settings.environment,
+                              [key]: event.target.value,
+                            },
+                          },
+                        },
+                      ])
                     }
                   />
                 </Field>
               ))}
             </Section>
+            <LightingPlansPanel
+              key={`${project.id}:${project.production?.activeSceneId ?? ''}`}
+              project={project}
+              editor={editor}
+            />
             <Section title="交流轴线">
               {[0, 1].map((index) => (
                 <Field key={index} label={`角色 ${index + 1}`}>

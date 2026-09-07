@@ -4,11 +4,19 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import type { SceneObject } from '../../shared/types';
 import { ActorRig } from './ActorRig';
+import { buildModelGeometry } from '../../shared/modeling-geometry';
+import type { MotionObject } from '../../shared/motion';
+import { VehicleRig } from './VehicleRig';
+import { EffectRig } from './EffectRig';
+import { ModelMorphRig } from '../../shared/model-morph';
 
 export interface BuiltObject {
   root: THREE.Group;
   rig?: ActorRig;
+  vehicleRig?: VehicleRig;
+  effectRig?: EffectRig;
   mixer?: THREE.AnimationMixer;
+  morphRig?: ModelMorphRig;
   asset?: THREE.Object3D;
 }
 
@@ -34,12 +42,29 @@ export async function buildObject(object: SceneObject): Promise<BuiltObject> {
   const root = new THREE.Group();
   root.name = object.name;
   root.userData.entityId = object.id;
+  if ((object as MotionObject).vehicle) {
+    const vehicleRig = new VehicleRig(object);
+    root.add(vehicleRig.root);
+    return { root, vehicleRig };
+  }
+  if ((object as MotionObject).effect) {
+    const effectRig = new EffectRig(object);
+    root.add(effectRig.root);
+    return { root, effectRig };
+  }
   const [w, h, d] = object.dimensions.map((value) => Math.max(0.001, value));
   const material = new THREE.MeshStandardMaterial({
     color: object.tone || '#dddeda',
     roughness: 0.89,
     metalness: 0.015,
   });
+  if (object.modeling) {
+    const geometry = buildModelGeometry(object.modeling);
+    material.flatShading =
+      (object.modeling.kind === 'mesh' || object.modeling.kind === 'stack') && !geometry.userData.smooth;
+    mesh(geometry, material, root);
+    return { root };
+  }
   const dark = new THREE.MeshStandardMaterial({ color: '#818b87', roughness: 0.82 });
   const pale = new THREE.MeshStandardMaterial({ color: '#e8eae7', roughness: 0.95 });
   const box = (
@@ -167,9 +192,16 @@ export async function buildObject(object: SceneObject): Promise<BuiltObject> {
         pending.catch(() => assets.delete(object.assetUrl!));
       }
       const gltf = await pending;
+      gltf.scene.traverse((child) => {
+        const association = gltf.parser.associations.get(child) as
+          { meshes?: number; primitives?: number } | undefined;
+        if (child instanceof THREE.Mesh && association?.meshes !== undefined)
+          child.userData.whiteframeMorphMeshKey = `mesh:${association.meshes}/primitive:${association.primitives ?? 0}`;
+      });
       const asset = clone(gltf.scene);
       asset.traverse((child) => {
         if (child instanceof THREE.Mesh) {
+          if (!child.geometry.hasAttribute('normal')) child.geometry.computeVertexNormals();
           child.material = material;
           child.castShadow = true;
           child.receiveShadow = true;
@@ -186,13 +218,20 @@ export async function buildObject(object: SceneObject): Promise<BuiltObject> {
       asset.scale.multiplyScalar(scale);
       asset.position.add(new THREE.Vector3(-center.x * scale, -bounds.min.y * scale, -center.z * scale));
       root.add(asset);
-      if (gltf.animations.length) {
+      const morphRig = new ModelMorphRig(asset);
+      if (gltf.animations.length && object.animationIndex !== null) {
         const mixer = new THREE.AnimationMixer(asset);
-        const clip = gltf.animations.find((item) => item.name === object.animationName) || gltf.animations[0];
+        const clip =
+          object.animationIndex !== undefined
+            ? gltf.animations[object.animationIndex]
+            : object.animationName !== undefined
+              ? gltf.animations.find((item) => item.name === object.animationName)
+              : gltf.animations[0];
+        if (!clip) throw new Error(`Model animation not found: ${object.name}`);
         mixer.clipAction(clip).play();
-        return { root, asset, mixer };
+        return { root, asset, mixer, morphRig };
       }
-      return { root, asset };
+      return { root, asset, morphRig };
     }
     default:
       box(w, h, d, 0, h / 2, 0);

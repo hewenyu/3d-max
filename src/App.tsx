@@ -5,8 +5,11 @@ import {
   Check,
   ChevronDown,
   Columns2,
+  ClipboardCheck,
   Download,
   FilePlus2,
+  FileInput,
+  Film,
   FolderOpen,
   Focus,
   Grid2X2,
@@ -24,10 +27,12 @@ import {
   Scan,
   Scaling,
   Undo2,
+  Users,
   X,
 } from 'lucide-react';
 import type { Project, SequenceClip } from '../shared/types';
 import { sampleTimeline } from '../shared/timeline';
+import { cameraToClipTime, clipDuration, sourceToClipTime } from '../shared/time-map';
 import { useEditor } from './useEditor';
 import { usePlayback } from './usePlayback';
 import { Stage, type ViewMode } from './components/Stage';
@@ -37,6 +42,11 @@ import { Timeline } from './components/Timeline';
 import { IconButton, timecode } from './components/Controls';
 import { ConnectionDialog, CutReviewDialog, ExportDialog, NewProjectDialog } from './components/Dialogs';
 import { ProjectsDialog } from './components/ProjectsDialog';
+import { ContinuityDialog } from './components/ContinuityDialog';
+import { SequenceCompareDialog } from './components/SequenceCompareDialog';
+import { ViewportToolsMenu } from './components/ViewportToolsMenu';
+import { ScriptImportDialog } from './components/ScriptImportDialog';
+import { ReviewDialog } from './components/ReviewDialog';
 import type { SceneEngine } from './engine/SceneEngine';
 
 export default function App() {
@@ -55,7 +65,9 @@ export default function App() {
   const [leftVisible, setLeftVisible] = useState(true);
   const [rightVisible, setRightVisible] = useState(true);
   const [mobilePanel, setMobilePanel] = useState<'left' | 'right' | null>(null);
-  const [dialog, setDialog] = useState<'export' | 'mcp' | 'new' | 'projects' | 'cuts' | null>(null);
+  const [dialog, setDialog] = useState<
+    'export' | 'mcp' | 'new' | 'projects' | 'cuts' | 'continuity' | 'compare' | 'script' | 'review' | null
+  >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [saved, setSaved] = useState(false);
   const sample = project ? sampleTimeline(project, playback.time) : null;
@@ -75,24 +87,40 @@ export default function App() {
     setInspectorTab('shot');
     const selectedShot = project?.shots.find((s) => s.id === clip.shotId);
     if (selectedShot) setSelected([selectedShot.cameraId]);
+    if (
+      selectedShot?.sceneId &&
+      project?.production &&
+      (selectedShot.sceneId !== project.production.activeSceneId ||
+        selectedShot.performanceId !== project.production.activePerformanceId)
+    ) {
+      editor.run('scene.select', {
+        sceneId: selectedShot.sceneId,
+        performanceId: selectedShot.performanceId,
+      });
+    }
   };
   const seekSource = (source: number) => {
     playback.setPlaying(false);
     if (!project) return;
     if (sample?.clip && source >= sample.clip.sourceIn && source < sample.clip.sourceOut) {
-      playback.seek(sample.clipStart + source - sample.clip.sourceIn);
+      playback.seek(sample.clipStart + sourceToClipTime(sample.clip, source));
       return;
     }
     let offset = 0;
     const sequence = project.sequences.find((s) => s.id === project.activeSequenceId);
     for (const clip of sequence?.clips ?? []) {
       if (source >= clip.sourceIn && source <= clip.sourceOut) {
-        playback.seek(offset + source - clip.sourceIn);
+        playback.seek(offset + sourceToClipTime(clip, source));
         return;
       }
-      offset += clip.sourceOut - clip.sourceIn;
+      offset += clipDuration(clip);
     }
     playback.seek(source);
+  };
+  const seekCamera = (cameraTime: number) => {
+    playback.setPlaying(false);
+    if (sample?.clip) playback.seek(sample.clipStart + cameraToClipTime(sample.clip, cameraTime));
+    else seekSource(cameraTime);
   };
   const saveProject = () => {
     const link = document.createElement('a');
@@ -148,6 +176,9 @@ export default function App() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   });
+  useEffect(() => {
+    if (playback.audioError) editor.setError(playback.audioError);
+  }, [playback.audioError, editor.setError]);
   useEffect(() => {
     if (!editor.error) return;
     const timer = setTimeout(() => editor.setError(''), 10000);
@@ -213,12 +244,32 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
+                  playback.setPlaying(false);
+                  setDialog('script');
+                  setProjectMenu(false);
+                }}
+              >
+                <FileInput size={15} />
+                剧本拆解
+              </button>
+              <button
+                onClick={() => {
                   saveProject();
                   setProjectMenu(false);
                 }}
               >
                 <Download size={15} />
                 下载项目
+              </button>
+              <button
+                onClick={() => {
+                  playback.setPlaying(false);
+                  setDialog('review');
+                  setProjectMenu(false);
+                }}
+              >
+                <Users size={15} />
+                团队审片
               </button>
             </div>
           )}
@@ -237,7 +288,13 @@ export default function App() {
           <span>MCP</span>
         </button>
         <IconButton icon={saved ? Check : Save} label="下载项目文件" onClick={saveProject} />
-        <button className="primary-button export-button" onClick={() => setDialog('export')}>
+        <button
+          className="primary-button export-button"
+          onClick={() => {
+            playback.setPlaying(false);
+            setDialog('export');
+          }}
+        >
           <Download size={14} />
           <span>导出视频</span>
           {activeJob && (
@@ -304,26 +361,89 @@ export default function App() {
         </div>
         <div className="tools-group right-tools">
           <IconButton
+            className="desktop-viewport-tool"
+            icon={ClipboardCheck}
+            label="连续性审查"
+            onClick={() => {
+              playback.setPlaying(false);
+              setDialog('continuity');
+            }}
+          />
+          <IconButton
+            className="desktop-viewport-tool"
+            icon={Film}
+            label="镜头方案比较"
+            onClick={() => {
+              playback.setPlaying(false);
+              setDialog('compare');
+            }}
+          />
+          <IconButton
+            className="desktop-viewport-tool"
             icon={Columns2}
             label="切点连续性"
             disabled={
               (project.sequences.find((s) => s.id === project.activeSequenceId)?.clips.length ?? 0) < 2
             }
-            onClick={() => setDialog('cuts')}
+            onClick={() => {
+              playback.setPlaying(false);
+              setDialog('cuts');
+            }}
           />
           <IconButton
+            className="desktop-viewport-tool"
             icon={Grid2X2}
             label="网格与辅助线"
             active={helpers}
             onClick={() => setHelpers(!helpers)}
           />
           <IconButton
+            className="desktop-viewport-tool"
             icon={Scan}
             label="构图安全区"
             active={safeFrame}
             onClick={() => setSafeFrame(!safeFrame)}
           />
           <span className="tool-divider" />
+          <ViewportToolsMenu
+            actions={[
+              { label: '撤销', icon: Undo2, disabled: !editor.history.canUndo, run: () => editor.undo() },
+              { label: '重做', icon: Redo2, disabled: !editor.history.canRedo, run: () => editor.undo(true) },
+              { label: '移动', icon: Move, active: tool === 'translate', run: () => setTool('translate') },
+              { label: '旋转', icon: Rotate3D, active: tool === 'rotate', run: () => setTool('rotate') },
+              { label: '缩放', icon: Scaling, active: tool === 'scale', run: () => setTool('scale') },
+              { label: '网格吸附', icon: Magnet, active: snap, run: () => setSnap(!snap) },
+              { label: '聚焦选中对象', icon: Focus, run: () => engine.current?.focus(selected[0]) },
+              {
+                label: '连续性审查',
+                icon: ClipboardCheck,
+                run: () => {
+                  playback.setPlaying(false);
+                  setDialog('continuity');
+                },
+              },
+              {
+                label: '镜头方案比较',
+                icon: Film,
+                run: () => {
+                  playback.setPlaying(false);
+                  setDialog('compare');
+                },
+              },
+              {
+                label: '切点连续性',
+                icon: Columns2,
+                disabled:
+                  (project.sequences.find((s) => s.id === project.activeSequenceId)?.clips.length ?? 0) < 2,
+                run: () => {
+                  playback.setPlaying(false);
+                  setDialog('cuts');
+                },
+              },
+              { label: '网格与辅助线', icon: Grid2X2, active: helpers, run: () => setHelpers(!helpers) },
+              { label: '构图安全区', icon: Scan, active: safeFrame, run: () => setSafeFrame(!safeFrame) },
+            ]}
+          />
           <IconButton
             icon={PanelLeftClose}
             label="场景资源面板"
@@ -346,6 +466,11 @@ export default function App() {
       </div>
       <div className="workspace">
         <ScenePanel
+          onContextChange={() => {
+            playback.setPlaying(false);
+            setSelected([]);
+            setMode('edit');
+          }}
           project={project}
           selected={selected}
           onSelect={chooseObject}
@@ -405,8 +530,12 @@ export default function App() {
         <Inspector
           project={project}
           selected={selected}
+          onSelect={chooseObject}
           shot={shot}
+          clip={sample?.clip ?? null}
           sourceTime={sample?.sourceTime ?? 0}
+          cameraTime={sample?.cameraTime ?? 0}
+          onCameraSeek={seekCamera}
           time={playback.time}
           editor={editor}
           tab={inspectorTab}
@@ -414,6 +543,7 @@ export default function App() {
           onSeek={seekSource}
           getView={() => engine.current?.getEditorCamera()}
           getTarget={(id) => engine.current?.getObjectTarget(id)}
+          getConstraints={(id) => engine.current?.getConstraintResults(id) ?? []}
           onClose={() => setMobilePanel(null)}
         />
       </div>
@@ -423,6 +553,10 @@ export default function App() {
         playback={playback}
         activeClipId={sample?.clip?.id ?? null}
         onClipSelect={chooseClip}
+        onObjectSelect={(id) => {
+          chooseObject([id]);
+          if (window.matchMedia('(max-width: 760px)').matches) setMobilePanel('right');
+        }}
         getView={() => engine.current?.getEditorCamera()}
       />
       <footer className="statusbar">
@@ -458,6 +592,18 @@ export default function App() {
         <ExportDialog project={project} shot={shot} editor={editor} onClose={() => setDialog(null)} />
       )}
       {dialog === 'mcp' && <ConnectionDialog onClose={() => setDialog(null)} />}
+      {dialog === 'script' && (
+        <ScriptImportDialog
+          editor={editor}
+          onClose={() => setDialog(null)}
+          onApplied={() => {
+            playback.seek(0);
+            setSelected([]);
+            setMode('camera');
+            setInspectorTab('shot');
+          }}
+        />
+      )}
       {dialog === 'new' && <NewProjectDialog editor={editor} onClose={() => setDialog(null)} />}
       {dialog === 'projects' && (
         <ProjectsDialog
@@ -468,6 +614,45 @@ export default function App() {
       )}
       {dialog === 'cuts' && (
         <CutReviewDialog project={project} time={playback.time} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'continuity' && (
+        <ContinuityDialog
+          project={project}
+          editor={editor}
+          onClose={() => setDialog(null)}
+          onNavigate={async (finding) => {
+            playback.setPlaying(false);
+            const boundShot = project.shots.find((candidate) => candidate.id === finding.shotId);
+            if (
+              boundShot?.sceneId &&
+              project.production &&
+              (boundShot.sceneId !== project.production.activeSceneId ||
+                boundShot.performanceId !== project.production.activePerformanceId)
+            ) {
+              try {
+                await editor.command('scene.select', {
+                  sceneId: boundShot.sceneId,
+                  performanceId: boundShot.performanceId,
+                });
+              } catch {
+                return;
+              }
+            }
+            playback.seek(finding.sequenceTime);
+            setMode('camera');
+            setSelected(finding.objectIds.length ? finding.objectIds : [finding.cameraId]);
+            setInspectorTab(finding.objectIds.length ? 'object' : 'shot');
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog === 'review' && <ReviewDialog jobs={editor.jobs} onClose={() => setDialog(null)} />}
+      {dialog === 'compare' && (
+        <SequenceCompareDialog
+          project={project}
+          initialTime={playback.time}
+          onClose={() => setDialog(null)}
+        />
       )}
     </main>
   );

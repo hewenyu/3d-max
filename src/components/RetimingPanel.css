@@ -1,0 +1,74 @@
+.retiming-panel {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+.retiming-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.retiming-summary span {
+  display: grid;
+  gap: 5px;
+}
+.retiming-curve {
+  width: 100%;
+  height: 150px;
+  background: #eff3f1;
+  border: 1px solid #d9e0dc;
+}
+.retiming-curve line {
+  stroke: #b8c5be;
+  stroke-width: 1;
+}
+.retiming-curve polyline {
+  stroke: #147f67;
+  stroke-width: 2.5;
+}
+.retiming-curve text {
+  fill: #52645a;
+  font-size: 11px;
+}
+.retiming-table-wrap {
+  overflow-x: auto;
+}
+.retiming-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 530px;
+  font-size: 12px;
+}
+.retiming-table th,
+.retiming-table td {
+  padding: 6px;
+  text-align: left;
+  border-bottom: 1px solid #dce2df;
+}
+.retiming-table .number-field {
+  width: 94px;
+}
+.retiming-table select {
+  min-width: 105px;
+}
+.retiming-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 22px;
+}
+.retiming-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+@media (max-width: 600px) {
+  .retiming-settings {
+    grid-template-columns: 1fr;
+  }
+  .retiming-panel {
+    padding: 12px;
+  }
+}

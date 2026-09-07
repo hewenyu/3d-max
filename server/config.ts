@@ -13,7 +13,7 @@ export interface ServerConfig {
 export function getConfig(): ServerConfig {
   const port = Number(process.env.PORT || 4173);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid TCP port');
-  const distDir = resolve('dist');
+  const distDir = resolve(process.env.WHITEFRAME_DIST_DIR || 'dist');
   const apiUrl = `http://127.0.0.1:${port}`;
   const development = process.argv.includes('--dev');
   const webUrl = `http://127.0.0.1:${process.env.WEB_PORT || 5173}`;

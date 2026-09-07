@@ -14,19 +14,37 @@ import type {
 import { createObject, id } from './project';
 import { validateProject } from './schema';
 import { commandDefinitions } from './command-definitions';
+import { retimeClip, splitClip, trimClip } from './time-map';
+import type { CameraTiming, ClipRetiming } from './types';
+import { applyModelingCommand, modelingCommandDefinitions } from './modeling';
 import { buildCameraMotion, type CameraMotion } from './camera-motion';
+import { applyProductionCommand, productionCommandDefinitions } from './production-commands';
+import { syncProduction } from './production';
+import { DomainError } from './domain-error';
+import { actorCommandDefinitions, applyActorCommand } from './actor-commands';
+import { protectActorTargets, remapActorTargets } from './actor-validation';
+import { motionCommandDefinitions } from './motion';
+import { applyMotionCommand } from './motion-operations';
+import { applyCameraSettingsCommand, cameraSettingsCommandDefinitions, cameraTrack } from './camera-commands';
+import { aspectComposition, type Aspect } from './camera-optics';
+import { applyModelCommand, modelCommandDefinitions } from './model-catalog';
+import { applyCameraPreset } from './camera-presets';
+import { applyContinuityCommand, continuityCommandDefinitions } from './continuity-types';
+import { instantiateTemplate } from './templates';
+import { planScriptImport } from './script-plan';
+import { faceCommandDefinitions, applyFaceCommand } from './face-commands';
+import { applyLightingCommand, lightingCommandDefinitions } from './lighting-commands';
+import { captureLightingState, lightingCopyName, validateLightingLocks } from './lighting-plans';
+import {
+  applySynchronization,
+  applySynchronizationCommand,
+  captureSynchronization,
+  createSynchronizationTransaction,
+  synchronizationCommandDefinitions,
+} from './synchronization-operations';
 export { validateProject, commandDefinitions };
 
-export class DomainError extends Error {
-  constructor(
-    message: string,
-    public code = 'DOMAIN_ERROR',
-    public status = 400,
-  ) {
-    super(message);
-    this.name = 'DomainError';
-  }
-}
+export { DomainError };
 
 type Entity = { id: string; locked?: boolean };
 function find<T extends Entity>(items: T[], entityId: unknown): T {
@@ -84,6 +102,7 @@ function deleteObject(project: Project, objectId: unknown) {
   }
   project.objects.filter((object) => removed.has(object.id)).forEach((object) => unlocked(object));
   for (const object of project.objects.filter((object) => !removed.has(object.id))) {
+    protectActorTargets(object, removed);
     if (
       (object.attachment && removed.has(object.attachment.objectId)) ||
       object.keyframes.some((frame) => frame.attachment && removed.has(frame.attachment.objectId))
@@ -102,6 +121,7 @@ function deleteObject(project: Project, objectId: unknown) {
     }
   }
   for (const shot of project.shots) {
+    if (project.production && shot.sceneId !== project.production.activeSceneId) continue;
     if ([...shot.subjectIds, ...shot.hiddenIds].some((entityId) => removed.has(entityId))) {
       unlocked(shot);
       shot.subjectIds = shot.subjectIds.filter((entityId) => !removed.has(entityId));
@@ -148,6 +168,11 @@ function duplicateObject(project: Project, payload: Record<string, unknown>): Sc
       const clone = structuredClone(object);
       clone.id = mapping.get(object.id)!;
       clone.locked = false;
+      remapActorTargets(clone, mapping);
+      for (const event of clone.motionEvents ?? []) {
+        event.id = id('event');
+        if (event.otherId) event.otherId = mapping.get(event.otherId) ?? event.otherId;
+      }
       clone.name = object.id === source.id ? String(payload.name ?? `${source.name} 副本`) : object.name;
       clone.parentId = clone.parentId ? (mapping.get(clone.parentId) ?? clone.parentId) : null;
       if (clone.attachment)
@@ -170,6 +195,7 @@ function duplicateSequence(project: Project, payload: Record<string, unknown>): 
   const source = find(project.sequences, payload.id);
   const cameras = new Map<string, string>();
   const shots = new Map<string, string>();
+  const lightingPlans = new Map<string, string>();
   for (const shotId of new Set(source.clips.map((clip) => clip.shotId))) {
     const shot = find(project.shots, shotId);
     if (!cameras.has(shot.cameraId)) {
@@ -190,6 +216,17 @@ function duplicateSequence(project: Project, payload: Record<string, unknown>): 
       cameraId: cameras.get(shot.cameraId)!,
       locked: false,
     };
+    if (shot.lightingPlanId) {
+      if (!lightingPlans.has(shot.lightingPlanId)) {
+        const plan = structuredClone(find(project.lightingPlans ?? [], shot.lightingPlanId));
+        plan.id = id('lighting');
+        plan.name = lightingCopyName(plan.name);
+        plan.locked = false;
+        project.lightingPlans!.push(plan);
+        lightingPlans.set(shot.lightingPlanId, plan.id);
+      }
+      clonedShot.lightingPlanId = lightingPlans.get(shot.lightingPlanId)!;
+    }
     shots.set(shotId, clonedShot.id);
     project.shots.push(clonedShot);
   }
@@ -207,8 +244,72 @@ function duplicateSequence(project: Project, payload: Record<string, unknown>): 
 }
 
 function mutate(project: Project, command: Command): unknown {
+  if (lightingCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyLightingCommand(project, command);
+  if (command.type === 'camera.preset') return applyCameraPreset(project, command);
+  if (faceCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyFaceCommand(project, command);
+  if (command.type === 'template.instantiate') return instantiateTemplate(project, command.payload);
+  if (continuityCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyContinuityCommand(project, command.type, command.payload);
+  if (synchronizationCommandDefinitions.some((definition) => definition.type === command.type))
+    return applySynchronizationCommand(project, command);
+  if (cameraSettingsCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyCameraSettingsCommand(project, command);
+  if (modelCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyModelCommand(project, command);
+  if (motionCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyMotionCommand(project, command);
+  if (actorCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyActorCommand(project, command);
+  if (productionCommandDefinitions.some((definition) => definition.type === command.type))
+    return applyProductionCommand(project, command);
   const p = command.payload;
   switch (command.type) {
+    case 'script.apply': {
+      const plan = planScriptImport(project, p);
+      const applied = applyCommands(project, plan.commands);
+      Object.assign(project, applied.project);
+      return plan.summary;
+    }
+    case 'clip.transition': {
+      const sequence = find(project.sequences, p.sequenceId);
+      unlocked(sequence);
+      const clip = find(sequence.clips, p.clipId);
+      unlocked(find(project.shots, clip.shotId));
+      const previous = sequence.clips[sequence.clips.indexOf(clip) - 1];
+      if (p.transitionIn !== undefined && previous) unlocked(find(project.shots, previous.shotId));
+      for (const field of ['fadeIn', 'fadeOut', 'transitionIn'] as const) {
+        if (p[field] === null) delete clip[field];
+        else if (p[field] !== undefined) Object.assign(clip, { [field]: structuredClone(p[field]) });
+      }
+      return clip;
+    }
+    case 'clip.retime':
+    case 'clip.trim':
+    case 'clip.split': {
+      const sequence = find(project.sequences, p.sequenceId);
+      unlocked(sequence);
+      const clip = find(sequence.clips, p.clipId);
+      unlocked(find(project.shots, clip.shotId));
+      const index = sequence.clips.indexOf(clip);
+      if (command.type === 'clip.split') {
+        const pieces = splitClip(clip, Number(p.time), String(p.rightId ?? id('clip')));
+        sequence.clips.splice(index, 1, ...pieces);
+        return pieces;
+      }
+      const next =
+        command.type === 'clip.trim'
+          ? trimClip(clip, Number(p.sourceIn), Number(p.sourceOut))
+          : retimeClip(
+              clip,
+              p.retiming as ClipRetiming | null,
+              p.fitSourceRange !== false,
+              p.cameraTiming as CameraTiming | undefined,
+            );
+      sequence.clips[index] = next;
+      return next;
+    }
     case 'project.update':
       Object.assign(project, p);
       return { id: project.id };
@@ -297,7 +398,12 @@ function mutate(project: Project, command: Command): unknown {
     case 'camera.motion': {
       const camera = find(project.cameras, p.id);
       cameraUnlocked(project, camera);
-      camera.keyframes = buildCameraMotion(project, camera, p as CameraMotion);
+      const track = cameraTrack(camera, p.aspect as Aspect | undefined);
+      track.keyframes = buildCameraMotion(
+        project,
+        aspectComposition(camera, p.aspect as Aspect | undefined),
+        p as CameraMotion,
+      );
       return camera;
     }
     case 'camera.create': {
@@ -329,12 +435,15 @@ function mutate(project: Project, command: Command): unknown {
       const camera = find(project.cameras, p.id);
       cameraUnlocked(project, camera);
       const keyframe = p.keyframe as CameraKeyframe;
-      return setKeyframe(camera.keyframes, { ...keyframe, id: keyframe.id ?? id('keyframe') });
+      return setKeyframe(cameraTrack(camera, p.aspect as Aspect | undefined).keyframes, {
+        ...keyframe,
+        id: keyframe.id ?? id('keyframe'),
+      });
     }
     case 'camera.keyframe.delete': {
       const camera = find(project.cameras, p.id);
       cameraUnlocked(project, camera);
-      return removeEntity(camera.keyframes, p.keyframeId);
+      return removeEntity(cameraTrack(camera, p.aspect as Aspect | undefined).keyframes, p.keyframeId);
     }
     case 'shot.create': {
       const shot: Shot = {
@@ -411,6 +520,12 @@ function mutate(project: Project, command: Command): unknown {
       const beat = find(project.beats, p.id);
       unlocked(beat);
       project.shots.forEach((shot) => {
+        if (
+          project.production &&
+          (shot.sceneId !== project.production.activeSceneId ||
+            shot.performanceId !== project.production.activePerformanceId)
+        )
+          return;
         if (shot.beatId === beat.id) {
           unlocked(shot);
           shot.beatId = null;
@@ -446,6 +561,8 @@ function mutate(project: Project, command: Command): unknown {
     case 'note.delete':
       return removeEntity(project.notes, p.id);
     default:
+      if (modelingCommandDefinitions.some((definition) => definition.type === command.type))
+        return applyModelingCommand(project, command);
       throw new DomainError(`Unknown command: ${command.type}`);
   }
 }
@@ -458,12 +575,18 @@ export function applyCommands(
   if (!Array.isArray(commands) || commands.length === 0 || commands.length > 500)
     throw new DomainError('A transaction requires 1 to 500 commands');
   const draft = structuredClone(project);
+  const synchronizationTransaction = createSynchronizationTransaction();
   const results: unknown[] = [];
   for (const command of commands) {
     const definition = commandDefinitions.find((item) => item.type === command.type);
     if (!definition) throw new DomainError(`Unknown command: ${command.type}`);
     const payload = definition.schema.parse(command.payload) as Record<string, unknown>;
+    const synchronizationSnapshot = captureSynchronization(draft);
+    const lightingSnapshot = captureLightingState(draft);
     results.push(structuredClone(mutate(draft, { type: command.type, payload })));
+    applySynchronization(draft, synchronizationSnapshot, synchronizationTransaction);
+    syncProduction(draft);
+    validateLightingLocks(lightingSnapshot, draft);
     const entityIds = [
       ...draft.objects,
       ...draft.cameras,

@@ -1,0 +1,53 @@
+.template-library {
+  min-height: 0;
+  overflow-y: auto;
+}
+.template-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.template-filter input {
+  min-width: 0;
+  flex: 1;
+}
+.template-row {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+.template-row-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.template-row-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.template-row-title svg {
+  flex-shrink: 0;
+}
+.template-row p {
+  overflow-wrap: anywhere;
+  margin: 5px 0;
+}
+.template-row-actions {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 7px;
+}
+.template-row-actions > button:first-child {
+  margin-right: auto;
+}
+.template-edit {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.template-edit input {
+  min-width: 0;
+  width: 100%;
+}

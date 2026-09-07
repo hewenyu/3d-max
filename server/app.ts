@@ -10,11 +10,24 @@ import { ApiError, errorBody, errorStatus } from './errors.ts';
 import { localOnly } from './security.ts';
 import { installAssetRoutes } from './assets.ts';
 import { installMcpRoutes } from './mcp.ts';
+import { simulateProject } from './simulation-service.ts';
+import { installPackageRoutes } from './package-routes.ts';
+import { inspectContinuity } from './continuity-service.ts';
+import { installTemplateRoutes } from './template-routes.ts';
+import { analyzeFaceAudio, faceCatalog, morphCatalog } from './face-service.ts';
+import { modelCatalog } from './model-service';
+import { parseScriptRequest } from './script-service.ts';
+import { speechCatalog } from './speech-runtime.ts';
+import { synthesizeSpeech } from './speech-service.ts';
+import { ReviewService } from './review-service.ts';
+import { createReviewApp, installReviewOwnerRoutes, reviewAddress } from './review-routes.ts';
 
 export function createApp(config: ServerConfig = getConfig()) {
   prepareDirectories(config);
   const store = new Store(config.dataDir, config.token);
   const render = new RenderService(config, store);
+  const reviews = new ReviewService(store, config);
+  const review = reviewAddress(config);
   const app = express();
   app.disable('x-powered-by');
   app.use(localOnly(config));
@@ -28,6 +41,25 @@ export function createApp(config: ServerConfig = getConfig()) {
     response.json(store.openProject(String(request.params.id))),
   );
   app.post('/api/commands', (request, response) => response.json(store.commands(request.body)));
+  app.get('/api/face/catalog', async (_request, response) => response.json(await faceCatalog()));
+  app.post('/api/models/catalog', async (request, response) =>
+    response.json(await modelCatalog(store, request.body)),
+  );
+  app.post('/api/face/analyze', async (request, response) =>
+    response.json(await analyzeFaceAudio(store, request.body)),
+  );
+  app.post('/api/face/morph-catalog', async (request, response) =>
+    response.json(await morphCatalog(store, request.body)),
+  );
+  app.post('/api/script/parse', (request, response) => response.json(parseScriptRequest(request.body)));
+  app.get('/api/speech/catalog', async (_request, response) => response.json(await speechCatalog()));
+  app.post('/api/speech/synthesize', async (request, response) =>
+    response.json(await synthesizeSpeech(store, config, request.body)),
+  );
+  app.post('/api/continuity', (request, response) => response.json(inspectContinuity(store, request.body)));
+  app.post('/api/simulation/bake', async (request, response) =>
+    response.json(await simulateProject(store, request.body)),
+  );
   app.post('/api/project/new', (request, response) => {
     const input = z
       .object({
@@ -80,6 +112,9 @@ export function createApp(config: ServerConfig = getConfig()) {
     });
   });
   installAssetRoutes(app, config, store);
+  installPackageRoutes(app, config, store);
+  installTemplateRoutes(app, store);
+  installReviewOwnerRoutes(app, reviews, review.url);
   app.post('/api/preview', async (request, response) => response.json(await render.preview(request.body)));
   app.get('/api/renders', (_request, response) => response.json(store.jobs()));
   app.post('/api/renders', (request, response) => response.status(202).json(render.start(request.body)));
@@ -95,6 +130,36 @@ export function createApp(config: ServerConfig = getConfig()) {
       .type('video/mp4')
       .attachment(`whiteframe-${job.id.slice(0, 8)}.mp4`)
       .sendFile(resolve(config.dataDir, 'renders', `${job.id}.mp4`), { dotfiles: 'allow' });
+  });
+  app.get('/api/renders/:id/stream', (request, response, next) => {
+    const job = store.job(String(request.params.id));
+    if (job.status !== 'completed')
+      throw new ApiError('RENDER_NOT_READY', 'Export is not ready for playback', 409);
+    response
+      .type('video/mp4')
+      .set({
+        'Content-Disposition': `inline; filename="whiteframe-${job.id.slice(0, 8)}.mp4"`,
+        'Cache-Control': 'private, max-age=0, must-revalidate',
+      })
+      .sendFile(
+        resolve(config.dataDir, 'renders', `${job.id}.mp4`),
+        { dotfiles: 'allow', acceptRanges: true },
+        (error) => {
+          if (!error) return;
+          if (response.headersSent) return next(error);
+          response.removeHeader('Content-Type');
+          response.removeHeader('Content-Disposition');
+          const fileError = error as Error & { status?: number; headers?: Record<string, string> };
+          if (fileError.status === 416) {
+            if (fileError.headers?.['Content-Range'])
+              response.set('Content-Range', fileError.headers['Content-Range']);
+            return next(
+              new ApiError('RANGE_NOT_SATISFIABLE', 'Requested video range is outside the file', 416),
+            );
+          }
+          next(error);
+        },
+      );
   });
   const mcp = installMcpRoutes(app, store, render, config);
   app.get('/api/connection', (_request, response) =>
@@ -140,6 +205,9 @@ export function createApp(config: ServerConfig = getConfig()) {
     app,
     store,
     render,
+    reviews,
+    review,
+    reviewApp: createReviewApp(reviews, review.url),
     async close() {
       await render.close();
       store.close();

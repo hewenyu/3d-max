@@ -430,3 +430,45 @@
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.production-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.production-panel .field {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+.production-panel select,
+.production-panel input,
+.production-panel textarea {
+  width: 100%;
+  min-width: 0;
+}
+.production-shot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+.production-shot > span:nth-child(2) {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.story-scene-entry + .story-scene-entry {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.production-difference {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  padding: 8px 0;
+}
+.performance-differences > summary {
+  cursor: pointer;
+  padding-top: 8px;
+  font-size: 11px;
+}

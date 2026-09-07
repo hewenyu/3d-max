@@ -3,6 +3,14 @@ import { createDemoProject } from '../shared/project';
 import { applyCommands } from '../shared/commands';
 import { sampleCamera, sampleObject } from '../shared/timeline';
 import type { Command, Project } from '../shared/types';
+import type { SpeechCatalog } from '../shared/speech';
+
+const unavailableSpeech: SpeechCatalog = {
+  available: false,
+  engines: [],
+  encoding: { available: true },
+  limits: { textCharacters: 5000, durationSeconds: 300, rate: { min: 80, max: 350, default: 180 } },
+};
 
 interface ReviewWindow extends Window {
   emitReviewProject(project: Project): void;
@@ -50,6 +58,7 @@ async function mockEditor(
     if (path === '/api/project') return route.fulfill({ json: initial });
     if (path === '/api/history') return route.fulfill({ json: { canUndo: false, canRedo: false } });
     if (path === '/api/commands') return route.fulfill({ json: { project: initial, results: [] } });
+    if (path === '/api/speech/catalog') return route.fulfill({ json: unavailableSpeech });
     return route.fulfill({ json: [] });
   });
   await page.goto('/');
@@ -67,6 +76,28 @@ async function settle(page: Page) {
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
 }
+
+test('a malformed speech catalog stays isolated and can be refreshed without losing the editor', async ({
+  page,
+}) => {
+  let requests = 0;
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await mockEditor(page, project('A'), async (route, path) => {
+    if (path !== '/api/speech/catalog') return false;
+    await route.fulfill({ json: ++requests === 1 ? [] : unavailableSpeech });
+    return true;
+  });
+  await page.getByRole('button', { name: '导演', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('语音目录响应无效，请刷新重试');
+  await expect(page.locator('.project-name')).toContainText('A');
+  await expect(page.getByRole('button', { name: '合成并加入时间线', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '刷新可用语音', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: '镜头', exact: true }).click();
+  await expect(page.getByRole('spinbutton', { name: '机位 · m X', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
 
 test('a delayed initial project response cannot revive the project superseded by SSE', async ({ page }) => {
   const a = project('A');

@@ -1,0 +1,49 @@
+.transition-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+.transition-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.transition-fields .field {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.transition-fields .field > span:first-child {
+  width: auto;
+}
+.transition-fields input,
+.transition-fields select {
+  width: 100%;
+  min-width: 0;
+}
+.transition-metadata {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+}
+.transition-metadata dt {
+  color: var(--muted);
+}
+.transition-metadata dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.transition-panel .inline-error {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.transition-panel .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+}

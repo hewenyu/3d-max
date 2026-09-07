@@ -3,7 +3,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import type { Project, SceneObject, TimelineSample, Vec3 } from '../../shared/types';
 import { sampleCamera, sampleObject, sampleTimeline } from '../../shared/timeline';
-import { buildObject, disposeBuiltObject, type BuiltObject } from './ObjectFactory';
+import type { BuiltObject } from './ObjectFactory';
+import type { ActorConstraintResult } from '../../shared/actor-animation';
+import { applyActorConstraints } from './ActorConstraints';
+import { CameraOpticsRenderer } from './CameraOpticsRenderer';
+import { sceneFarPlane } from '../../shared/scene-framing';
+import { resolveLighting } from '../../shared/lighting-plans';
+import { sampleSequenceOpacity, sampleSequenceTransition } from '../../shared/transitions';
+import { TransitionRenderer } from './TransitionRenderer';
+import { gaitDistance, SceneResourceCache, type SceneBinding, type SceneResources } from './SceneResources';
 
 type ViewMode = 'edit' | 'camera' | 'top';
 interface TimeOptions {
@@ -13,7 +21,7 @@ interface TimeOptions {
 }
 interface EngineOptions {
   interactive?: boolean;
-  onSelect?: (id: string | null) => void;
+  onSelect?: (id: string | null, additive?: boolean) => void;
   onTransform?: (id: string, patch: { position: Vec3; rotation: Vec3; scale: Vec3 }) => void;
 }
 
@@ -32,17 +40,27 @@ export class SceneEngine {
   private readonly selectionHelpers = new THREE.Group();
   private readonly editorCamera = new THREE.PerspectiveCamera(43, 1, 0.05, 300);
   private readonly shotCamera = new THREE.PerspectiveCamera(43, 16 / 9, 0.025, 300);
+  private opticsRenderer: CameraOpticsRenderer | null = null;
+  private transitionRenderer: TransitionRenderer | null = null;
+  private drawing = false;
   private readonly topCamera = new THREE.OrthographicCamera(-6, 6, 6, -6, 0.05, 300);
   private readonly orbit: OrbitControls;
   private readonly transform: TransformControls;
   private readonly keyLight: THREE.DirectionalLight;
   private readonly ambient: THREE.HemisphereLight;
+  private readonly ground: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  private readonly lightDirection = new THREE.Vector3(4, 8, 5).normalize();
+  private sceneBounds = new THREE.Box3();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly safeOverlay: HTMLDivElement;
   private readonly resizeObserver: ResizeObserver;
-  private readonly objects = new Map<string, BuiltObject>();
-  private readonly distanceTables = new Map<string, Array<{ time: number; distance: number }>>();
+  private objects = new Map<string, BuiltObject>();
+  private readonly resourceCache = new SceneResourceCache();
+  private resources: SceneResources | null = null;
+  private binding: SceneBinding | null = null;
+  private pendingBuild: AbortController | null = null;
+  private projectLoading = false;
   private project: Project | null = null;
   private mode: ViewMode = 'edit';
   private selected: string[] = [];
@@ -61,6 +79,7 @@ export class SceneEngine {
   private axisLine: THREE.Line | null = null;
   private lookLines = new THREE.Group();
   private lastSample: TimelineSample | null = null;
+  private constraintResults = new Map<string, ActorConstraintResult[]>();
 
   constructor(
     private readonly container: HTMLElement,
@@ -70,11 +89,12 @@ export class SceneEngine {
       antialias: true,
       alpha: false,
       preserveDrawingBuffer: true,
+      logarithmicDepthBuffer: true,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(options.interactive === false ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.VSMShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.22;
@@ -133,15 +153,16 @@ export class SceneEngine {
     this.keyLight.shadow.blurSamples = 8;
     const fill = new THREE.DirectionalLight('#e8f2f0', 1.25);
     fill.position.set(-6, 4, -1);
-    this.scene.add(this.ambient, this.keyLight, fill);
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(200, 200),
+    this.scene.add(this.ambient, this.keyLight, this.keyLight.target, fill);
+    this.ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
       new THREE.MeshStandardMaterial({ color: '#d1d7d3', roughness: 1 }),
     );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.12;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    this.ground.rotation.x = -Math.PI / 2;
+    this.ground.position.y = -0.12;
+    this.ground.scale.set(200, 200, 1);
+    this.ground.receiveShadow = true;
+    this.scene.add(this.ground);
     const grid = new THREE.GridHelper(40, 40, '#a0ada7', '#b9c4bd');
     grid.position.y = 0.003;
     const gridMaterial = grid.material as THREE.Material;
@@ -177,38 +198,87 @@ export class SceneEngine {
 
   setProject(project: Project): Promise<void> {
     const current = ++this.generation;
-    this.project = project;
-    this.ready = this.buildProject(project, current);
+    this.pendingBuild?.abort();
+    const controller = new AbortController();
+    this.pendingBuild = controller;
+    this.projectLoading = true;
+    this.transform.detach();
+    this.refreshSelection();
+    this.ready = this.buildProject(project, current, controller.signal);
     return this.ready;
   }
 
-  private async buildProject(project: Project, generation: number) {
-    const results = await Promise.allSettled(project.objects.map((object) => buildObject(object)));
-    const built = results.map((result) => (result.status === 'fulfilled' ? result.value : null));
-    if (generation !== this.generation || this.destroyed) {
-      built.forEach((item) => {
-        if (item) disposeBuiltObject(item);
-      });
-      return;
-    }
-    const failed = results.find((result) => result.status === 'rejected');
-    if (failed?.status === 'rejected') {
-      built.forEach((item) => {
-        if (item) disposeBuiltObject(item);
-      });
-      throw failed.reason;
-    }
+  private async buildProject(project: Project, generation: number, signal: AbortSignal) {
+    const resources = await this.resourceCache.prepare(project, signal);
+    if (!resources) return;
+    if (generation !== this.generation || this.destroyed) return resources.release();
     this.transform.detach();
-    this.objects.forEach(disposeBuiltObject);
-    this.objects.clear();
-    this.distanceTables.clear();
-    project.objects.forEach((object, index) => {
-      const result = built[index]!;
-      this.objects.set(object.id, result);
-      this.objectGroup.add(result.root);
-      if (object.type === 'actor') this.buildDistanceTable(object);
-    });
-    const lighting = project.settings.lighting;
+    this.detachResourceRoots();
+    this.resources?.release();
+    this.resources = resources;
+    this.binding = null;
+    this.project = project;
+    this.projectLoading = false;
+    this.pendingBuild = null;
+    this.rebuildCameraHelpers();
+    this.setTime(this.time, this.timeOptions);
+    this.setSelection(this.selected);
+    this.resize(this.width, this.height);
+  }
+
+  private detachResourceRoots() {
+    for (const binding of this.resources?.bindings ?? [])
+      for (const object of binding.objects.values()) object.root.removeFromParent();
+    this.objectGroup.clear();
+  }
+
+  private activateBinding(binding: SceneBinding) {
+    if (this.binding === binding) return;
+    this.transform.detach();
+    for (const object of this.objects.values()) object.root.removeFromParent();
+    this.objectGroup.clear();
+    this.binding = binding;
+    this.objects = binding.objects;
+    for (const object of this.objects.values()) this.objectGroup.add(object.root);
+    const environment = binding.project.settings.environment;
+    this.scene.background = new THREE.Color(environment?.background ?? '#cfd6d3');
+    this.ground.visible = environment?.ground ?? true;
+    this.ground.material.color.set(environment?.groundTone ?? '#d1d7d3');
+  }
+
+  setTime(sequenceTime: number, options: TimeOptions = {}) {
+    this.time = Math.max(0, sequenceTime);
+    this.timeOptions = options;
+    if (!this.project || !this.resources || this.destroyed) return;
+    const sample = sampleTimeline(this.project, this.time, options.sequenceId);
+    if (options.shotId) {
+      const shot = this.project.shots.find((item) => item.id === options.shotId);
+      if (shot) {
+        sample.shot = shot;
+        sample.sourceTime = options.sourceTime ?? shot.sourceIn + this.time;
+        sample.cameraTime = sample.sourceTime;
+        const camera = this.project.cameras.find((item) => item.id === shot.cameraId);
+        sample.camera = camera ? sampleCamera(camera, sample.sourceTime, this.project.settings.aspect) : null;
+      }
+    } else if (options.sourceTime !== undefined) {
+      sample.sourceTime = options.sourceTime;
+      sample.cameraTime = options.sourceTime;
+      const camera = this.project.cameras.find((item) => item.id === sample.shot?.cameraId);
+      sample.camera = camera ? sampleCamera(camera, sample.sourceTime, this.project.settings.aspect) : null;
+    }
+    this.applySample(sample);
+    this.draw();
+  }
+
+  private applySample(sample: TimelineSample) {
+    if (!this.project || !this.resources) return;
+    this.lastSample = sample;
+    const binding =
+      this.mode === 'camera' && sample.shot
+        ? (this.resources.shots.get(sample.shot.id) ?? this.resources.workspace)
+        : this.resources.workspace;
+    this.activateBinding(binding);
+    const lighting = resolveLighting(this.project, this.mode === 'camera' ? sample.shot : null);
     this.ambient.intensity = lighting.ambient * 2;
     this.keyLight.intensity = lighting.intensity * 1.25;
     const azimuth = THREE.MathUtils.degToRad(lighting.azimuth);
@@ -218,58 +288,14 @@ export class SceneEngine {
       10 * Math.sin(elevation),
       10 * Math.cos(azimuth) * Math.cos(elevation),
     );
-    this.rebuildCameraHelpers();
-    this.setTime(this.time, this.timeOptions);
-    this.setSelection(this.selected);
-    this.resize(this.width, this.height);
-  }
-
-  private buildDistanceTable(object: SceneObject) {
-    const boundaries = [
-      ...new Set([0, ...object.keyframes.filter((key) => key.position || key.action).map((key) => key.time)]),
-    ].sort((a, b) => a - b);
-    const table = [{ time: 0, distance: 0 }];
-    let previous = new THREE.Vector3(...sampleObject(object, 0).position);
-    for (let interval = 1; interval < boundaries.length; interval++) {
-      const start = boundaries[interval - 1];
-      const end = boundaries[interval];
-      const samples = Math.min(32, Math.max(2, Math.ceil((end - start) * 24)));
-      for (let step = 1; step <= samples; step++) {
-        const time = THREE.MathUtils.lerp(start, end, step / samples);
-        const sampled = sampleObject(object, time);
-        const position = new THREE.Vector3(...sampled.position);
-        table.push({ time, distance: table[table.length - 1].distance + previous.distanceTo(position) });
-        previous = position;
-      }
-    }
-    this.distanceTables.set(object.id, table);
-  }
-
-  setTime(sequenceTime: number, options: TimeOptions = {}) {
-    this.time = Math.max(0, sequenceTime);
-    this.timeOptions = options;
-    if (!this.project || this.destroyed) return;
-    const sample = sampleTimeline(this.project, this.time, options.sequenceId);
-    if (options.shotId) {
-      const shot = this.project.shots.find((item) => item.id === options.shotId);
-      if (shot) {
-        sample.shot = shot;
-        sample.sourceTime = options.sourceTime ?? shot.sourceIn + this.time;
-        const camera = this.project.cameras.find((item) => item.id === shot.cameraId);
-        sample.camera = camera ? sampleCamera(camera, sample.sourceTime) : null;
-      }
-    } else if (options.sourceTime !== undefined) {
-      sample.sourceTime = options.sourceTime;
-      const camera = this.project.cameras.find((item) => item.id === sample.shot?.cameraId);
-      sample.camera = camera ? sampleCamera(camera, sample.sourceTime) : null;
-    }
-    this.lastSample = sample;
+    this.lightDirection.copy(this.keyLight.position).normalize();
     const sampled = new Map<string, SceneObject>();
-    for (const object of this.project.objects)
-      sampled.set(object.id, sampleObject(object, sample.sourceTime));
+    for (const object of binding.project.objects)
+      sampled.set(object.id, sampleObject(object, sample.sourceTime, { render: true }));
     for (const object of sampled.values()) {
       const item = this.objects.get(object.id);
       if (!item) continue;
+      item.root.name = object.name;
       const parent = object.parentId ? this.objects.get(object.parentId)?.root : this.objectGroup;
       if (item.root.parent !== parent) (parent || this.objectGroup).add(item.root);
       item.root.position.fromArray(object.position);
@@ -278,27 +304,25 @@ export class SceneEngine {
       item.root.visible =
         object.visible && !(this.mode === 'camera' && sample.shot?.hiddenIds.includes(object.id));
       if (item.rig) {
-        const table = this.distanceTables.get(object.id) || [{ time: 0, distance: 0 }];
-        let low = 0;
-        let high = table.length - 1;
-        while (high - low > 1) {
-          const middle = Math.floor((low + high) / 2);
-          if (table[middle].time > sample.sourceTime) high = middle;
-          else low = middle;
-        }
-        const before = table[low];
-        const after = table[high];
-        const ratio =
-          after.time === before.time
-            ? 0
-            : THREE.MathUtils.clamp((sample.sourceTime - before.time) / (after.time - before.time), 0, 1);
-        const distance =
-          table[table.length - 1].distance > 0.001
-            ? THREE.MathUtils.lerp(before.distance, after.distance, ratio)
-            : sample.sourceTime * (object.actor?.speed ?? 1);
+        const distance = gaitDistance(
+          binding.distances.get(object.id),
+          sample.sourceTime,
+          object.actor?.speed ?? 1,
+        );
         item.rig.update(object, sample.sourceTime, distance);
       }
+      if (item.vehicleRig) {
+        const source = binding.project.objects.find((candidate) => candidate.id === object.id)!;
+        item.vehicleRig.update(
+          source,
+          sample.sourceTime,
+          gaitDistance(binding.distances.get(object.id), sample.sourceTime, 0),
+        );
+      }
+      item.effectRig?.update(object, sample.sourceTime);
+      item.morphRig?.reset();
       item.mixer?.setTime(sample.sourceTime);
+      item.morphRig?.update(object.morph, sample.sourceTime);
     }
     this.objectGroup.updateMatrixWorld(true);
     for (const object of sampled.values()) {
@@ -325,18 +349,29 @@ export class SceneEngine {
       }
     }
     this.objectGroup.updateMatrixWorld(true);
+    this.constraintResults = applyActorConstraints(sampled, this.objects, sample.sourceTime);
+    this.objectGroup.updateMatrixWorld(true);
+    this.sceneBounds.setFromObject(this.objectGroup);
+    const extent = this.sceneBounds.isEmpty()
+      ? 200
+      : Math.max(
+          200,
+          ...this.sceneBounds.min.toArray().map(Math.abs),
+          ...this.sceneBounds.max.toArray().map(Math.abs),
+        ) * 4;
+    this.ground.scale.set(extent, extent, 1);
     if (sample.camera) {
       this.shotCamera.position.fromArray(sample.camera.position);
       this.shotCamera.lookAt(new THREE.Vector3(...sample.camera.target));
       this.shotCamera.fov = sample.camera.fov;
       this.shotCamera.aspect = aspectRatio(this.project);
+      this.shotCamera.far = sceneFarPlane(this.shotCamera.position, this.sceneBounds);
       this.shotCamera.updateProjectionMatrix();
     }
     this.refreshSelection();
     this.syncTransformTarget();
-    this.updateCameraHelpers(sample.sourceTime);
+    this.updateCameraHelpers(sample.cameraTime);
     this.updateDirectorHelpers(sampled);
-    this.draw();
   }
 
   setView(mode: ViewMode) {
@@ -360,7 +395,7 @@ export class SceneEngine {
 
   private syncTransformTarget() {
     let target: THREE.Object3D | undefined;
-    if (this.selected.length === 1 && this.options.interactive !== false) {
+    if (this.canEditBinding && this.selected.length === 1 && this.options.interactive !== false) {
       const object = this.project?.objects.find((item) => item.id === this.selected[0]);
       if (object && !object.locked && !sampleObject(object, this.lastSample?.sourceTime ?? 0).attachment) {
         target = this.objects.get(object.id)?.root;
@@ -483,6 +518,20 @@ export class SceneEngine {
     return this.lastSample;
   }
 
+  getConstraintResults(id = this.selected[0]) {
+    return id ? (this.constraintResults.get(id) ?? []) : [];
+  }
+
+  getRenderContext() {
+    return {
+      sceneId: this.binding?.sceneId ?? null,
+      performanceId: this.binding?.performanceId ?? null,
+      sceneName: this.binding?.project.sceneName ?? null,
+      workspace: this.binding?.workspace ?? false,
+      loading: this.projectLoading,
+    };
+  }
+
   private get activeCamera() {
     return this.mode === 'camera'
       ? this.shotCamera
@@ -493,14 +542,22 @@ export class SceneEngine {
 
   private updateSafeFrame() {
     const frame = this.getFrameRect();
-    const inset = 0.05;
+    const inset = this.project?.settings.safeArea ?? {
+      top: 0.05,
+      right: 0.05,
+      bottom: 0.05,
+      left: 0.05,
+      thirds: true,
+    };
     Object.assign(this.safeOverlay.style, {
       display: this.safeFrameEnabled && this.mode === 'camera' ? 'block' : 'none',
-      left: `${frame.x + frame.width * inset}px`,
-      top: `${frame.y + frame.height * inset}px`,
-      width: `${frame.width * (1 - inset * 2)}px`,
-      height: `${frame.height * (1 - inset * 2)}px`,
+      left: `${frame.x + frame.width * inset.left}px`,
+      top: `${frame.y + frame.height * inset.top}px`,
+      width: `${frame.width * (1 - inset.left - inset.right)}px`,
+      height: `${frame.height * (1 - inset.top - inset.bottom)}px`,
     });
+    for (const child of this.safeOverlay.children)
+      (child as HTMLElement).style.display = inset.thirds ? 'block' : 'none';
   }
 
   private refreshSelection() {
@@ -511,6 +568,7 @@ export class SceneEngine {
       }
     });
     this.selectionHelpers.clear();
+    if (!this.canEditBinding) return;
     for (const id of this.selected) {
       const target = this.objects.get(id);
       if (target) this.selectionHelpers.add(new THREE.BoxHelper(target.root, '#188b76'));
@@ -521,9 +579,10 @@ export class SceneEngine {
     this.clearHelpers(this.cameraHelpers);
     if (!this.project) return;
     for (const source of this.project.cameras) {
-      const camera = new THREE.PerspectiveCamera(source.fov, aspectRatio(this.project), 0.12, 0.65);
-      camera.position.fromArray(source.position);
-      camera.lookAt(new THREE.Vector3(...source.target));
+      const sampled = sampleCamera(source, 0, this.project.settings.aspect);
+      const camera = new THREE.PerspectiveCamera(sampled.fov, aspectRatio(this.project), 0.12, 0.65);
+      camera.position.fromArray(sampled.position);
+      camera.lookAt(new THREE.Vector3(...sampled.target));
       camera.updateMatrixWorld(true);
       const helper = new THREE.CameraHelper(camera);
       helper.setColors(
@@ -548,7 +607,7 @@ export class SceneEngine {
 
   private updateCameraHelpers(sourceTime: number) {
     for (const source of this.project?.cameras || []) {
-      const sampled = sampleCamera(source, sourceTime);
+      const sampled = sampleCamera(source, sourceTime, this.project?.settings.aspect);
       for (const helper of this.cameraHelpers.children) {
         if (helper.userData.entityId !== source.id) continue;
         if (helper instanceof THREE.CameraHelper) {
@@ -574,7 +633,7 @@ export class SceneEngine {
       this.axisLine.removeFromParent();
       this.axisLine = null;
     }
-    const axis = this.project?.settings.axisActorIds || [];
+    const axis = this.binding?.project.settings.axisActorIds || [];
     const points = axis
       .slice(0, 2)
       .map((id) => this.objects.get(id)?.root.getWorldPosition(new THREE.Vector3()));
@@ -638,13 +697,17 @@ export class SceneEngine {
   private updateHelperVisibility() {
     const enabled = this.helpersEnabled && this.mode !== 'camera';
     this.helpers.visible = enabled;
-    this.transform.getHelper().visible = enabled && this.selected.length === 1;
-    this.transform.enabled = enabled && this.options.interactive !== false;
+    this.transform.getHelper().visible = enabled && this.canEditBinding && this.selected.length === 1;
+    this.transform.enabled = enabled && this.canEditBinding && this.options.interactive !== false;
+  }
+
+  private get canEditBinding() {
+    return !this.projectLoading && this.binding?.workspace === true;
   }
 
   private emitTransform() {
     const target = this.transform.object;
-    if (!target || !target.userData.entityId) return;
+    if (!this.canEditBinding || !target || !target.userData.entityId) return;
     this.options.onTransform?.(target.userData.entityId, {
       position: target.position.toArray() as Vec3,
       rotation: [target.rotation.x, target.rotation.y, target.rotation.z].map(
@@ -658,6 +721,10 @@ export class SceneEngine {
     this.pointerStart = { x: event.clientX, y: event.clientY };
   };
   private onPointerUp = (event: PointerEvent) => {
+    if (!this.canEditBinding) {
+      this.pointerStart = null;
+      return;
+    }
     if (!this.pointerStart || this.dragging || this.transform.axis || event.button !== 0) return;
     if (Math.hypot(event.clientX - this.pointerStart.x, event.clientY - this.pointerStart.y) > 5) return;
     const bounds = this.canvas.getBoundingClientRect();
@@ -684,7 +751,7 @@ export class SceneEngine {
       if (visible) id = candidate;
       if (id) break;
     }
-    this.options.onSelect?.(id);
+    this.options.onSelect?.(id, event.shiftKey || event.metaKey || event.ctrlKey);
     this.pointerStart = null;
   };
   private onDoubleClick = () => this.focus();
@@ -696,7 +763,76 @@ export class SceneEngine {
   };
 
   private draw() {
-    if (this.destroyed) return;
+    if (this.destroyed || this.drawing) return;
+    this.drawing = true;
+    try {
+      const sample = this.lastSample;
+      const useTransitions =
+        this.project &&
+        sample &&
+        this.mode === 'camera' &&
+        !this.timeOptions.shotId &&
+        this.timeOptions.sourceTime === undefined;
+      const transition = useTransitions
+        ? sampleSequenceTransition(this.project!, this.time, this.timeOptions.sequenceId)
+        : null;
+      const opacity = useTransitions
+        ? sampleSequenceOpacity(this.project!, this.time, this.timeOptions.sequenceId)
+        : 1;
+      if (transition) {
+        this.transitionRenderer ??= new TransitionRenderer();
+        this.transitionRenderer.render(
+          this.renderer,
+          this.getFrameRect(),
+          () => {
+            this.applySample(transition.outgoing);
+            this.drawFrame();
+          },
+          () => {
+            this.applySample(transition.incoming);
+            this.drawFrame();
+          },
+          transition.progress,
+        );
+        this.applySample(sample!);
+      } else if (opacity < 1) {
+        this.transitionRenderer ??= new TransitionRenderer();
+        this.transitionRenderer.render(
+          this.renderer,
+          this.getFrameRect(),
+          () => this.drawFrame(),
+          undefined,
+          0,
+          opacity,
+        );
+      } else this.drawFrame();
+    } finally {
+      this.drawing = false;
+    }
+  }
+
+  private drawFrame() {
+    const active = this.activeCamera;
+    const far = sceneFarPlane(active.position, this.sceneBounds);
+    if (active.far !== far) {
+      active.far = far;
+      active.updateProjectionMatrix();
+    }
+    const focus =
+      this.mode === 'camera' && this.lastSample?.camera
+        ? new THREE.Vector3(...this.lastSample.camera.target)
+        : this.orbit.target;
+    const shadowRadius = THREE.MathUtils.clamp(active.position.distanceTo(focus) * 0.9, 10, 200);
+    this.keyLight.target.position.copy(focus);
+    this.keyLight.position.copy(focus).addScaledVector(this.lightDirection, shadowRadius * 2);
+    Object.assign(this.keyLight.shadow.camera, {
+      left: -shadowRadius,
+      right: shadowRadius,
+      top: shadowRadius,
+      bottom: -shadowRadius,
+      far: Math.max(40, shadowRadius * 4),
+    });
+    this.keyLight.shadow.camera.updateProjectionMatrix();
     const frame = this.getFrameRect();
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, this.width, this.height);
@@ -705,7 +841,16 @@ export class SceneEngine {
     this.renderer.setViewport(frame.x, frame.y, frame.width, frame.height);
     this.renderer.setScissor(frame.x, frame.y, frame.width, frame.height);
     this.renderer.setScissorTest(true);
-    this.renderer.render(this.scene, this.activeCamera);
+    const optics = this.lastSample?.camera?.optics;
+    if (this.mode === 'camera' && optics?.enabled) {
+      this.opticsRenderer ??= new CameraOpticsRenderer(this.scene, this.shotCamera);
+      const target = optics.focusTargetId ? this.getObjectTarget(optics.focusTargetId) : undefined;
+      this.shotCamera.updateMatrixWorld(true);
+      const focusDistance = target
+        ? -this.shotCamera.worldToLocal(new THREE.Vector3(...target)).z
+        : optics.focusDistance;
+      this.opticsRenderer.render(this.renderer, frame.width, frame.height, optics, focusDistance);
+    } else this.renderer.render(this.scene, this.activeCamera);
     this.renderer.setScissorTest(false);
   }
 
@@ -713,6 +858,7 @@ export class SceneEngine {
     if (this.destroyed) return;
     this.destroyed = true;
     this.generation++;
+    this.pendingBuild?.abort();
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
@@ -720,7 +866,12 @@ export class SceneEngine {
     this.canvas.removeEventListener('dblclick', this.onDoubleClick);
     this.orbit.dispose();
     this.transform.dispose();
-    this.objects.forEach(disposeBuiltObject);
+    this.opticsRenderer?.dispose();
+    this.transitionRenderer?.dispose();
+    this.detachResourceRoots();
+    this.resources?.release();
+    this.resources = null;
+    this.objects.clear();
     this.clearHelpers(this.helpers);
     this.scene.traverse((child) => {
       if (child instanceof THREE.Mesh) {

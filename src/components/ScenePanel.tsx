@@ -12,6 +12,7 @@ import {
   Folder,
   Group,
   Layers,
+  ListChecks,
   LockKeyhole,
   Search,
   Sofa,
@@ -26,6 +27,8 @@ import type { ObjectType, Project, SceneObject } from '../../shared/types';
 import type { EditorActions } from '../useEditor';
 import { uploadAsset } from '../api';
 import { IconButton } from './Controls';
+import { ProductionPanel } from './ProductionPanel';
+import { TemplateLibrary } from './TemplateLibrary';
 
 const objectIcons: Partial<Record<ObjectType, typeof Box>> = {
   actor: CircleUserRound,
@@ -58,15 +61,18 @@ export function ScenePanel({
   onSelect,
   editor,
   onClose,
+  onContextChange,
 }: {
   project: Project;
   selected: string[];
   onSelect: (ids: string[]) => void;
   editor: EditorActions;
   onClose: () => void;
+  onContextChange: () => void;
 }) {
-  const [tab, setTab] = useState<'scene' | 'assets'>('scene');
+  const [tab, setTab] = useState<'scene' | 'assets' | 'production' | 'templates'>('scene');
   const [query, setQuery] = useState('');
+  const [multipleSelection, setMultipleSelection] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const select = (id: string, multiple: boolean) =>
     onSelect(
@@ -85,17 +91,24 @@ export function ScenePanel({
   const importModel = async (file?: File) => {
     if (!file) return;
     const projectId = project.id;
+    const expectedContext = {
+      sceneId: project.production?.activeSceneId ?? null,
+      performanceId: project.production?.activePerformanceId ?? null,
+    };
     try {
       const asset = await uploadAsset(file);
+      const objectId = crypto.randomUUID();
       await editor.command(
         'object.create',
         {
+          id: objectId,
           type: 'model',
           name: file.name.replace(/\.(glb|gltf)$/i, ''),
           assetUrl: asset.url,
         },
-        { projectId, staleMessage: '项目已切换，未导入上一项目的模型' },
+        { projectId, expectedContext, staleMessage: '项目已切换，未导入上一项目的模型' },
       );
+      onSelect([objectId]);
     } catch (e) {
       editor.setError((e as Error).message);
     }
@@ -126,8 +139,27 @@ export function ScenePanel({
         <button className={tab === 'assets' ? 'selected' : ''} onClick={() => setTab('assets')}>
           资产
         </button>
+        <button className={tab === 'production' ? 'selected' : ''} onClick={() => setTab('production')}>
+          场次
+        </button>
+        <button className={tab === 'templates' ? 'selected' : ''} onClick={() => setTab('templates')}>
+          模板
+        </button>
       </div>
-      {tab === 'scene' ? (
+      {tab === 'templates' ? (
+        <TemplateLibrary
+          project={project}
+          selected={selected}
+          editor={editor}
+          onInserted={(ids, scene) => {
+            if (scene) onContextChange();
+            onSelect(ids);
+            setTab('scene');
+          }}
+        />
+      ) : tab === 'production' ? (
+        <ProductionPanel project={project} editor={editor} onContextChange={onContextChange} />
+      ) : tab === 'scene' ? (
         <>
           <div className="search-field">
             <Search size={14} />
@@ -155,7 +187,9 @@ export function ScenePanel({
                   >
                     <button
                       className="tree-select"
-                      onClick={(e) => select(object.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+                      onClick={(e) =>
+                        select(object.id, multipleSelection || e.shiftKey || e.metaKey || e.ctrlKey)
+                      }
                     >
                       <Icon size={14} />
                       <span>{object.name}</span>
@@ -196,6 +230,12 @@ export function ScenePanel({
           </div>
           <div className="panel-bottom-tools">
             <IconButton
+              icon={ListChecks}
+              label="多选对象"
+              active={multipleSelection}
+              onClick={() => setMultipleSelection(!multipleSelection)}
+            />
+            <IconButton
               icon={Copy}
               label="复制选中对象"
               disabled={!selected.some((id) => project.objects.some((o) => o.id === id))}
@@ -211,7 +251,18 @@ export function ScenePanel({
               icon={Group}
               label="编组"
               disabled={selected.length < 2}
-              onClick={() => editor.run('object.group', { ids: selected, name: '新编组' })}
+              onClick={async () => {
+                try {
+                  const response = await editor.command('object.group', { ids: selected, name: '新编组' });
+                  const created = response?.results[0] as SceneObject | undefined;
+                  if (created) {
+                    onSelect([created.id]);
+                    setMultipleSelection(false);
+                  }
+                } catch {
+                  /* Editor reports validated command failures. */
+                }
+              }}
             />
             <span className="flex-spacer" />
             <IconButton

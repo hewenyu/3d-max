@@ -6,6 +6,8 @@ import {
   ChevronLast,
   Copy,
   Film,
+  Blend,
+  Gauge,
   LockKeyhole,
   Pause,
   Play,
@@ -15,12 +17,18 @@ import {
   Trash2,
   Volume2,
   VolumeX,
+  Zap,
 } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import type { Project, SequenceClip, Vec3 } from '../../shared/types';
 import type { EditorActions } from '../useEditor';
 import type { Playback } from '../usePlayback';
 import { IconButton, NumberInput, timecode } from './Controls';
 import { ShotThumbnail } from './Stage';
+import { RetimingPanel } from './RetimingPanel';
+import { TransitionPanel } from './TransitionPanel';
+import { cameraToClipTime, clipDuration, sampleClipTime, sourceToClipTime } from '../../shared/time-map';
+import { resolveShotProject } from '../../shared/production';
 
 export function Timeline({
   project,
@@ -29,6 +37,7 @@ export function Timeline({
   activeClipId,
   onClipSelect,
   getView,
+  onObjectSelect,
 }: {
   project: Project;
   editor: EditorActions;
@@ -36,19 +45,36 @@ export function Timeline({
   activeClipId: string | null;
   onClipSelect: (clip: SequenceClip, start: number) => void;
   getView: () => { position: Vec3; target: Vec3; fov: number } | undefined;
+  onObjectSelect?: (id: string) => void;
 }) {
   const sequence = project.sequences.find((s) => s.id === project.activeSequenceId) ?? project.sequences[0];
   const clips = sequence?.clips ?? [];
-  let position = 0;
-  const placements = clips.map((clip) => {
-    const start = position;
-    position += clip.sourceOut - clip.sourceIn;
-    return { clip, start, shot: project.shots.find((s) => s.id === clip.shotId) };
-  });
+  const [retimingOpen, setRetimingOpen] = useState(false);
+  const [transitionOpen, setTransitionOpen] = useState(false);
+  const { placements, position } = useMemo(() => {
+    let position = 0;
+    const placements = clips.map((clip) => {
+      const start = position;
+      position += clipDuration(clip);
+      const shot = project.shots.find((s) => s.id === clip.shotId);
+      return { clip, start, shot, scene: resolveShotProject(project, shot ?? null) };
+    });
+    return { placements, position };
+  }, [clips, project]);
   const current = clips.find((c) => c.id === activeClipId);
+  const hasEvents = placements.some(({ scene }) =>
+    scene.objects.some((object) => object.motionEvents?.length),
+  );
+  const eventNames = { collision: '碰撞', impact: '命中', projectile: '弹道', explosion: '爆炸' };
   const currentShot = project.shots.find((s) => s.id === current?.shotId);
   const saveClips = (next: SequenceClip[]) =>
     editor.run('sequence.update', { id: sequence.id, patch: { clips: next } });
+  const trim = (sourceIn: number, sourceOut: number) => {
+    if (!current) return;
+    if (current.retiming)
+      editor.run('clip.trim', { sequenceId: sequence.id, clipId: current.id, sourceIn, sourceOut });
+    else saveClips(clips.map((clip) => (clip.id === current.id ? { ...clip, sourceIn, sourceOut } : clip)));
+  };
   const move = (direction: number) => {
     const index = clips.findIndex((c) => c.id === activeClipId);
     const next = [...clips];
@@ -93,7 +119,7 @@ export function Timeline({
     playback.seek(Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)) * playback.duration);
   };
   return (
-    <section className="timeline">
+    <section className={`timeline${hasEvents ? ' has-events' : ''}`}>
       <div className="timeline-toolbar">
         <div className="timeline-title">
           <Film size={15} />
@@ -189,6 +215,7 @@ export function Timeline({
             </div>
             <div className="track-label">表演节拍</div>
             <div className="track-label">动作 / 运镜</div>
+            {hasEvents && <div className="track-label">运动事件</div>}
           </div>
           <div className="tracks">
             <div
@@ -215,7 +242,7 @@ export function Timeline({
                       key={clip.id}
                       className={`shot-card ${clip.id === activeClipId ? 'selected' : ''}`}
                       style={{
-                        width: `${((clip.sourceOut - clip.sourceIn) / (playback.duration || 1)) * 100}%`,
+                        width: `${(clipDuration(clip) / (playback.duration || 1)) * 100}%`,
                       }}
                       onClick={() => onClipSelect(clip, start)}
                     >
@@ -223,27 +250,33 @@ export function Timeline({
                       <div className="shot-card-label">
                         <b>{String(index + 1).padStart(2, '0')}</b>
                         <span>{shot.name}</span>
-                        <small>{(clip.sourceOut - clip.sourceIn).toFixed(1)}s</small>
+                        <small>
+                          {clipDuration(clip).toFixed(1)}s{clip.retiming && ' · R'}
+                        </small>
                         {shot.locked && <LockKeyhole size={11} />}
+                        {(clip.fadeIn || clip.fadeOut || clip.transitionIn) && (
+                          <Blend size={11} aria-label="含画面转场" />
+                        )}
                       </div>
                     </button>
                   ),
               )}
             </div>
             <div className="beat-track">
-              {placements.flatMap(({ clip, start }) =>
-                project.beats
+              {placements.flatMap(({ clip, start, scene }) =>
+                scene.beats
                   .filter((b) => b.time >= clip.sourceIn && b.time < clip.sourceOut)
                   .map((b) => (
                     <button
                       key={`${clip.id}-${b.id}`}
                       className={`beat-marker marker-${b.kind}`}
+                      data-clip-id={clip.id}
                       title={`${b.label} · ${b.text}`}
                       style={{
-                        left: `${((start + b.time - clip.sourceIn) / (playback.duration || 1)) * 100}%`,
-                        maxWidth: `${(Math.max(6, Math.min(b.endTime, clip.sourceOut) - b.time) / (playback.duration || 1)) * 100}%`,
+                        left: `${((start + sourceToClipTime(clip, b.time)) / (playback.duration || 1)) * 100}%`,
+                        maxWidth: `${(Math.max(0.1, sourceToClipTime(clip, Math.min(b.endTime, clip.sourceOut)) - sourceToClipTime(clip, b.time)) / (playback.duration || 1)) * 100}%`,
                       }}
-                      onClick={() => playback.seek(start + b.time - clip.sourceIn)}
+                      onClick={() => onClipSelect(clip, start + sourceToClipTime(clip, b.time))}
                     >
                       {b.label}
                     </button>
@@ -251,25 +284,76 @@ export function Timeline({
               )}
             </div>
             <div className="animation-track">
-              {placements.flatMap(({ clip, start, shot }) =>
+              {placements.flatMap(({ clip, start, shot, scene }) =>
                 [
-                  ...project.objects.flatMap((o) => o.keyframes),
-                  ...(project.cameras.find((c) => c.id === shot?.cameraId)?.keyframes ?? []),
+                  ...scene.objects
+                    .flatMap((o) => o.keyframes.map((key) => ({ ...key, label: o.name })))
+                    .map((key) => ({
+                      ...key,
+                      edit: sourceToClipTime(clip, key.time),
+                      inRange: key.time >= clip.sourceIn && key.time < clip.sourceOut,
+                    })),
+                  ...(project.cameras.find((c) => c.id === shot?.cameraId)?.keyframes ?? []).map((key) => {
+                    const edit = cameraToClipTime(clip, key.time);
+                    return {
+                      ...key,
+                      label: project.cameras.find((c) => c.id === shot?.cameraId)!.name,
+                      edit,
+                      inRange:
+                        edit < clipDuration(clip) &&
+                        Math.abs(sampleClipTime(clip, edit).cameraTime - key.time) < 1e-8,
+                    };
+                  }),
                 ]
-                  .filter((k) => k.time >= clip.sourceIn && k.time < clip.sourceOut)
+                  .filter((k) => k.inRange)
                   .map((k, index) => (
                     <button
                       key={`${clip.id}-${k.id}-${index}`}
                       className="timeline-diamond"
+                      data-clip-id={clip.id}
+                      data-keyframe-id={k.id}
+                      aria-label={`${k.label} / ${timecode(k.time, project.settings.fps)}`}
                       title={timecode(k.time, project.settings.fps)}
                       style={{
-                        left: `${((start + k.time - clip.sourceIn) / (playback.duration || 1)) * 100}%`,
+                        left: `${((start + k.edit) / (playback.duration || 1)) * 100}%`,
                       }}
-                      onClick={() => playback.seek(start + k.time - clip.sourceIn)}
+                      onClick={() => onClipSelect(clip, start + k.edit)}
                     />
                   )),
               )}
             </div>
+            {hasEvents && (
+              <div className="event-track">
+                {placements.flatMap(({ clip, start, scene }) =>
+                  scene.objects.flatMap((object) =>
+                    (object.motionEvents ?? [])
+                      .filter((event) => event.time >= clip.sourceIn && event.time < clip.sourceOut)
+                      .map((event) => {
+                        const label = `${object.name} / ${eventNames[event.kind]} / ${timecode(event.time, project.settings.fps)}`;
+                        return (
+                          <button
+                            key={`${clip.id}-${object.id}-${event.id}`}
+                            className="timeline-event"
+                            data-clip-id={clip.id}
+                            data-event-id={event.id}
+                            aria-label={label}
+                            title={label}
+                            style={{
+                              left: `${((start + sourceToClipTime(clip, event.time)) / (playback.duration || 1)) * 100}%`,
+                            }}
+                            onClick={() => {
+                              onClipSelect(clip, start + sourceToClipTime(clip, event.time));
+                              onObjectSelect?.(object.id);
+                            }}
+                          >
+                            <Zap size={12} />
+                          </button>
+                        );
+                      }),
+                  ),
+                )}
+              </div>
+            )}
             <div
               className="playhead"
               style={{ left: `${(playback.time / (playback.duration || 1)) * 100}%` }}
@@ -287,28 +371,63 @@ export function Timeline({
             <NumberInput
               label="片段入点"
               value={current.sourceIn}
-              min={currentShot?.sourceIn ?? 0}
+              min={current.retiming ? current.sourceIn : (currentShot?.sourceIn ?? 0)}
               max={current.sourceOut - 1 / project.settings.fps}
               step={1 / project.settings.fps}
-              onChange={(sourceIn) =>
-                saveClips(clips.map((c) => (c.id === current.id ? { ...c, sourceIn } : c)))
-              }
+              onChange={(sourceIn) => trim(sourceIn, current.sourceOut)}
             />
             <span>至</span>
             <NumberInput
               label="片段出点"
               value={current.sourceOut}
               min={current.sourceIn + 1 / project.settings.fps}
-              max={currentShot?.sourceOut}
+              max={current.retiming ? current.sourceOut : currentShot?.sourceOut}
               step={1 / project.settings.fps}
-              onChange={(sourceOut) =>
-                saveClips(clips.map((c) => (c.id === current.id ? { ...c, sourceOut } : c)))
-              }
+              onChange={(sourceOut) => trim(current.sourceIn, sourceOut)}
             />
             <span className="clip-source-label">
               {project.shots.find((s) => s.id === current.shotId)?.name}
             </span>
             <span className="flex-spacer" />
+            <IconButton
+              icon={Blend}
+              label="画面转场"
+              disabled={sequence.locked || currentShot?.locked}
+              onClick={() => {
+                playback.setPlaying(false);
+                setTransitionOpen(true);
+              }}
+            />
+            <IconButton
+              icon={Gauge}
+              label="片段速度与时间"
+              disabled={sequence.locked || currentShot?.locked}
+              onClick={() => {
+                playback.setPlaying(false);
+                setRetimingOpen(true);
+              }}
+            />
+            <IconButton
+              icon={Scissors}
+              label="在播放头分割片段"
+              disabled={
+                sequence.locked ||
+                currentShot?.locked ||
+                playback.time <=
+                  (placements.find((item) => item.clip.id === current.id)?.start ?? 0) + 0.0001 ||
+                playback.time >=
+                  (placements.find((item) => item.clip.id === current.id)?.start ?? 0) +
+                    clipDuration(current) -
+                    0.0001
+              }
+              onClick={() =>
+                editor.run('clip.split', {
+                  sequenceId: sequence.id,
+                  clipId: current.id,
+                  time: playback.time - (placements.find((item) => item.clip.id === current.id)?.start ?? 0),
+                })
+              }
+            />
             <IconButton
               icon={ArrowLeft}
               label="镜头前移"
@@ -343,6 +462,25 @@ export function Timeline({
           <span className="muted">{project.sceneName}</span>
         )}
       </div>
+      {retimingOpen && current && (
+        <RetimingPanel
+          key={current.id}
+          clip={current}
+          sequenceId={sequence.id}
+          editor={editor}
+          onClose={() => setRetimingOpen(false)}
+        />
+      )}
+      {transitionOpen && current && (
+        <TransitionPanel
+          key={current.id}
+          project={project}
+          sequence={sequence}
+          clip={current}
+          editor={editor}
+          onClose={() => setTransitionOpen(false)}
+        />
+      )}
     </section>
   );
 }

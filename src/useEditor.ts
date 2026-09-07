@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, execute, getProject } from './api';
-import type { Command, Project, RenderJob } from '../shared/types';
+import type { Command, CommandRequest, Project, RenderJob } from '../shared/types';
 
 interface CommandOptions {
+  expectedContext?: CommandRequest['expectedContext'];
   projectId?: string;
   staleMessage?: string;
 }
@@ -27,6 +28,12 @@ export function useEditor() {
   const acceptResponse = useCallback(
     (next: Project, generation: number) => {
       if (generation === projectGeneration.current || next.id === current.current?.id) accept(next);
+    },
+    [accept],
+  );
+  const acceptCurrent = useCallback(
+    (next: Project) => {
+      if (current.current?.id === next.id) accept(next);
     },
     [accept],
   );
@@ -64,6 +71,10 @@ export function useEditor() {
   const command = useCallback(
     (type: CommandInput, payload: Record<string, unknown> = {}, options: CommandOptions = {}) => {
       const targetProjectId = options.projectId ?? current.current?.id;
+      const expectedContext = options.expectedContext ?? {
+        sceneId: current.current?.production?.activeSceneId ?? null,
+        performanceId: current.current?.production?.activePerformanceId ?? null,
+      };
       const staleError = () => {
         const error = new Error(options.staleMessage ?? '项目已切换，未执行上一项目的编辑');
         setError(error.message);
@@ -73,6 +84,14 @@ export function useEditor() {
       const task = queue.current.then(async () => {
         if (!current.current) return;
         if (current.current.id !== targetProjectId) throw staleError();
+        if (
+          (current.current.production?.activeSceneId ?? null) !== expectedContext.sceneId ||
+          (current.current.production?.activePerformanceId ?? null) !== expectedContext.performanceId
+        ) {
+          const error = new Error('场景或表演版本已切换，未执行上一版本的编辑');
+          setError(error.message);
+          throw error;
+        }
         setBusy(true);
         try {
           const result = await execute(
@@ -83,6 +102,7 @@ export function useEditor() {
                 : [{ type, payload }],
             current.current.revision,
             current.current.id,
+            expectedContext,
           );
           if (current.current?.id === targetProjectId) accept(result.project);
           refreshHistory();
@@ -137,7 +157,11 @@ export function useEditor() {
     async (path: string, data: unknown) => {
       const generation = ++projectGeneration.current;
       try {
-        const next = await api<Project>(path, { method: 'POST', body: JSON.stringify(data) });
+        const response = await api<Project | { project: Project }>(path, {
+          method: 'POST',
+          body: data instanceof FormData ? data : JSON.stringify(data),
+        });
+        const next = 'project' in response ? response.project : response;
         acceptResponse(next, generation);
         refreshHistory();
         return true;
@@ -151,6 +175,7 @@ export function useEditor() {
   return {
     project,
     accept,
+    acceptCurrent,
     error,
     setError,
     connected,

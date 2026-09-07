@@ -6,6 +6,7 @@ import type { CommandRequest, CommandResponse, Project, RenderJob } from '../sha
 import { applyCommands, validateProject } from '../shared/commands.ts';
 import { createDemoProject, createEmptyProject } from '../shared/project.ts';
 import { ApiError } from './errors.ts';
+import { assertModelAnimation } from './model-service';
 
 export interface AssetRecord {
   id: string;
@@ -127,9 +128,22 @@ export class Store extends EventEmitter {
   }
 
   assertAssets(project: Project) {
+    for (const object of [
+      ...project.objects,
+      ...(project.production?.scenes.flatMap((scene) => scene.objects) ?? []),
+    ]) {
+      const asset = object.assetUrl ? this.assetByUrl(object.assetUrl) : undefined;
+      if (object.type === 'model' && asset) assertModelAnimation(asset, object);
+    }
     for (const { url, kind } of [
       ...project.objects.map((object) => ({ url: object.assetUrl, kind: 'model/' })),
       ...project.audio.map((clip) => ({ url: clip.url, kind: 'audio/' })),
+      ...(project.production?.scenes.flatMap((scene) => [
+        ...scene.objects.map((object) => ({ url: object.assetUrl, kind: 'model/' })),
+        ...scene.performances.flatMap((take) =>
+          take.audio.map((clip) => ({ url: clip.url, kind: 'audio/' })),
+        ),
+      ]) ?? []),
     ]) {
       if (url && !this.assetByUrl(url)?.mime.startsWith(kind))
         throw new ApiError('INVALID_ASSET', 'Project references an unavailable local asset', 400, { url });
@@ -146,7 +160,26 @@ export class Store extends EventEmitter {
       .run(JSON.stringify(project), cursor + 1, project.id);
   }
 
-  commands(request: CommandRequest & { projectId?: string }): CommandResponse {
+  cachedCommands(projectId: string, requestId: string, fingerprint: string): CommandResponse | undefined {
+    const cached = this.db
+      .prepare('SELECT fingerprint,response FROM requests WHERE project_id=? AND request_id=?')
+      .get(projectId, requestId) as RequestRow | undefined;
+    if (!cached) return undefined;
+    if (cached.fingerprint !== fingerprint)
+      throw new ApiError(
+        'IDEMPOTENCY_CONFLICT',
+        'This requestId was already used with different commands',
+        409,
+      );
+    return { ...(JSON.parse(cached.response) as CommandResponse), replayed: true };
+  }
+
+  // Computed operations fingerprint their validated inputs before producing editable commands.
+  commands(
+    request: CommandRequest & { projectId?: string },
+    inputFingerprint?: string,
+    generatedAssets: AssetRecord[] = [],
+  ): CommandResponse {
     if (
       !request ||
       !Array.isArray(request.commands) ||
@@ -180,7 +213,8 @@ export class Store extends EventEmitter {
       (typeof request.projectId !== 'string' || !request.projectId || request.projectId.length > 200)
     )
       throw new ApiError('INVALID_PROJECT_ID', 'projectId must contain 1 to 200 characters');
-    const fingerprint = createHash('sha256').update(JSON.stringify(request.commands)).digest('hex');
+    const fingerprint =
+      inputFingerprint ?? createHash('sha256').update(JSON.stringify(request.commands)).digest('hex');
     const result: CommandResponse = this.transaction(() => {
       const current = this.project();
       if (request.projectId !== undefined && request.projectId !== current.id)
@@ -191,18 +225,8 @@ export class Store extends EventEmitter {
           { expected: request.projectId, actual: current.id, project: current },
         );
       if (request.requestId) {
-        const cached = this.db
-          .prepare('SELECT fingerprint,response FROM requests WHERE project_id=? AND request_id=?')
-          .get(current.id, request.requestId) as RequestRow | undefined;
-        if (cached) {
-          if (cached.fingerprint !== fingerprint)
-            throw new ApiError(
-              'IDEMPOTENCY_CONFLICT',
-              'This requestId was already used with different commands',
-              409,
-            );
-          return { ...(JSON.parse(cached.response) as CommandResponse), replayed: true };
-        }
+        const cached = this.cachedCommands(current.id, request.requestId, fingerprint);
+        if (cached) return cached;
       }
       if (request.expectedRevision !== undefined && request.expectedRevision !== current.revision)
         throw new ApiError(
@@ -211,7 +235,34 @@ export class Store extends EventEmitter {
           409,
           { expected: request.expectedRevision, actual: current.revision, project: current },
         );
+      if (request.expectedContext !== undefined) {
+        const context = request.expectedContext;
+        if (
+          !context ||
+          typeof context !== 'object' ||
+          Array.isArray(context) ||
+          Object.keys(context).some((key) => !['sceneId', 'performanceId'].includes(key)) ||
+          [context.sceneId, context.performanceId].some(
+            (id) => id !== null && (typeof id !== 'string' || !id || id.length > 160),
+          )
+        )
+          throw new ApiError(
+            'INVALID_CONTEXT',
+            'Expected context must contain sceneId and performanceId identifiers or null',
+          );
+        if (
+          context.sceneId !== (current.production?.activeSceneId ?? null) ||
+          context.performanceId !== (current.production?.activePerformanceId ?? null)
+        )
+          throw new ApiError(
+            'CONTEXT_CONFLICT',
+            'The active scene or performance changed; reload before editing',
+            409,
+            { project: current },
+          );
+      }
       const response = applyCommands(current, request.commands);
+      for (const asset of generatedAssets) this.addAsset(asset);
       this.assertAssets(response.project);
       response.project.revision = current.revision + 1;
       response.project.updatedAt = new Date().toISOString();

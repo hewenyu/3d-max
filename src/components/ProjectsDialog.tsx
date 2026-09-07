@@ -3,6 +3,7 @@ import { Check, Film, LoaderCircle, Upload } from 'lucide-react';
 import { api } from '../api';
 import type { EditorActions } from '../useEditor';
 import { Modal } from './Controls';
+import { ProjectPackageControls } from './ProjectPackageControls';
 
 interface ProjectSummary {
   id: string;
@@ -60,6 +61,7 @@ export function ProjectsDialog({
           <Upload size={15} />
           导入项目文件
         </button>
+        <ProjectPackageControls editor={editor} onImported={onClose} />
       </div>
     </Modal>
   );

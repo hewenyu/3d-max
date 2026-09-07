@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, X, type LucideIcon } from 'lucide-react';
 import type { Vec3 } from '../../shared/types';
 
@@ -43,6 +44,7 @@ export function NumberInput({
   step = 0.1,
   label,
   suffix,
+  disabled,
 }: {
   value: number;
   onChange: (value: number) => void;
@@ -51,8 +53,10 @@ export function NumberInput({
   step?: number;
   label?: string;
   suffix?: string;
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(String(Math.round(value * 1000) / 1000));
+  const [editing, setEditing] = useState(false);
   useEffect(() => setDraft(String(Math.round(value * 1000) / 1000)), [value]);
   const commit = () => {
     const number = Number(draft);
@@ -68,13 +72,21 @@ export function NumberInput({
     <div className="number-field">
       <input
         aria-label={label}
+        disabled={disabled}
         type="number"
         min={min}
         max={max}
         step={step}
-        value={draft}
+        value={editing ? draft : String(Math.round(value * 1000) / 1000)}
+        onFocus={() => {
+          setDraft(String(Math.round(value * 1000) / 1000));
+          setEditing(true);
+        }}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        onBlur={() => {
+          commit();
+          setEditing(false);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
@@ -98,16 +110,24 @@ export function TextInput({
   placeholder?: string;
 }) {
   const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
   useEffect(() => setDraft(value), [value]);
   const commit = () => {
     if (draft !== value) onChange(draft);
   };
   const props = {
     'aria-label': label,
-    value: draft,
+    value: editing ? draft : value,
     placeholder,
+    onFocus: () => {
+      setDraft(value);
+      setEditing(true);
+    },
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
-    onBlur: commit,
+    onBlur: () => {
+      commit();
+      setEditing(false);
+    },
   };
   return multiline ? (
     <textarea {...props} rows={3} />
@@ -208,7 +228,7 @@ export function Modal({
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
   }, [onClose]);
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
@@ -227,7 +247,8 @@ export function Modal({
         </header>
         {children}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -1,5 +1,26 @@
 import { z } from 'zod';
 import type { Project } from './types';
+import { clipDuration, hasSpeedRamp, retimingSourceDuration } from './time-map';
+import { transitionIssues } from './transitions';
+import { modelingSchema } from './modeling';
+import { createProductionSchema, validateProduction } from './production-schema';
+import { resolveShotProject } from './production';
+import { lightingPlanSchema, lightingSchema, validateLightingPlans } from './lighting-plans';
+import { continuityStateSchema } from './continuity-types';
+import { DomainError } from './domain-error';
+import { actorAnimationSchema } from './actor-animation';
+import { validateActorTargets } from './actor-validation';
+import {
+  effectSchema,
+  motionEventSchema,
+  motionPathSchema,
+  vehicleSchema,
+  validateMotionObject,
+} from './motion';
+import { rigidBodySchema } from './physics';
+import { cameraCompositionsSchema, cameraOpticsSchema, safeAreaSchema } from './camera-optics';
+import { synchronizationSchema, validateSynchronization } from './synchronization';
+import { faceAnimationSchema, modelMorphSchema, validateFace } from './face-animation';
 
 const finite = z.number().finite();
 export const identifier = z.string().min(1).max(160);
@@ -75,12 +96,23 @@ export const objectSchema = z
         speed: finite.min(0).max(30),
         pose: poseSchema,
         lookAtId: identifier.nullable(),
+        animation: actorAnimationSchema.optional(),
+        face: faceAnimationSchema.optional(),
       })
       .strict()
       .optional(),
     attachment: attachmentSchema.nullable().optional(),
     assetUrl: z.string().max(4096).optional(),
     animationName: z.string().max(200).optional(),
+    animationIndex: z.number().int().min(0).max(10000).nullable().optional(),
+    morph: modelMorphSchema.optional(),
+    modeling: modelingSchema.optional(),
+    motion: motionPathSchema.optional(),
+    vehicle: vehicleSchema.optional(),
+    physics: rigidBodySchema.optional(),
+    motionEvents: z.array(motionEventSchema).optional(),
+    effect: effectSchema.optional(),
+    rotationInterpolation: z.enum(['linear', 'quaternion']).optional(),
   })
   .strict();
 export const cameraKeyframeSchema = z
@@ -95,6 +127,8 @@ export const cameraKeyframeSchema = z
   .strict();
 export const cameraSchema = z
   .object({
+    optics: cameraOpticsSchema.optional(),
+    compositions: cameraCompositionsSchema.optional(),
     id: identifier,
     name: z.string().min(1).max(200),
     position: vec3Schema,
@@ -106,6 +140,10 @@ export const cameraSchema = z
   .strict();
 export const shotSchema = z
   .object({
+    lightingPlanId: identifier.optional(),
+    sceneId: identifier.optional(),
+    performanceId: identifier.optional(),
+    storySceneId: identifier.optional(),
     id: identifier,
     name: z.string().min(1).max(200),
     cameraId: identifier,
@@ -118,8 +156,44 @@ export const shotSchema = z
     locked: z.boolean(),
   })
   .strict();
+export const speedSegmentSchema = z
+  .object({
+    duration: finite.positive().max(86400),
+    fromSpeed: finite.min(0.0625).max(16),
+    toSpeed: finite.min(0.0625).max(16),
+    easing: z.enum(['constant', 'linear', 'smooth']),
+    curveIn: finite.min(0).max(1).optional(),
+    curveOut: finite.min(0).max(1).optional(),
+  })
+  .strict();
+export const retimingSchema = z
+  .object({
+    segments: z.array(speedSegmentSchema).min(1).max(256),
+    audio: z.enum(['follow', 'warp', 'mute']),
+  })
+  .strict();
+export const cameraTimingSchema = z
+  .object({
+    mode: z.enum(['source', 'independent']),
+    sourceIn: timeSchema.optional(),
+    rate: finite.min(-16).max(16).optional(),
+  })
+  .strict();
 export const clipSchema = z
-  .object({ id: identifier, shotId: identifier, sourceIn: timeSchema, sourceOut: timeSchema })
+  .object({
+    id: identifier,
+    shotId: identifier,
+    sourceIn: timeSchema,
+    sourceOut: timeSchema,
+    retiming: retimingSchema.optional(),
+    cameraTiming: cameraTimingSchema.optional(),
+    fadeIn: finite.positive().max(86400).optional(),
+    fadeOut: finite.positive().max(86400).optional(),
+    transitionIn: z
+      .object({ type: z.literal('dissolve'), duration: finite.positive().max(86400) })
+      .strict()
+      .optional(),
+  })
   .strict();
 export const sequenceSchema = z
   .object({
@@ -144,6 +218,9 @@ export const beatSchema = z
   .strict();
 export const audioSchema = z
   .object({
+    fadeIn: timeSchema.optional(),
+    fadeOut: timeSchema.optional(),
+    fadeCurve: z.enum(['linear', 'equalPower']).optional(),
     id: identifier,
     name: z.string().min(1).max(200),
     url: z.string().min(1).max(4096),
@@ -166,22 +243,35 @@ export const noteSchema = z
   .strict();
 export const settingsSchema = z
   .object({
+    lightingPlanId: identifier.optional(),
+    environment: z
+      .object({
+        ground: z.boolean(),
+        background: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+        groundTone: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      })
+      .strict()
+      .optional(),
+    safeArea: safeAreaSchema.optional(),
     fps: finite.int().min(1).max(60),
     aspect: z.enum(['16:9', '9:16', '1:1']),
     resolution: z.union([z.literal(720), z.literal(1080)]),
-    lighting: z
-      .object({
-        intensity: finite.min(0).max(10),
-        ambient: finite.min(0).max(5),
-        azimuth: finite,
-        elevation: finite.min(-90).max(90),
-      })
-      .strict(),
+    lighting: lightingSchema,
     axisActorIds: z.array(identifier).max(2),
   })
   .strict();
 export const projectSchema = z
   .object({
+    lightingPlans: z.array(lightingPlanSchema).max(1000).optional(),
+    continuity: continuityStateSchema.optional(),
+    synchronization: synchronizationSchema.optional(),
+    production: createProductionSchema({
+      object: objectSchema,
+      beat: beatSchema,
+      audio: audioSchema,
+      lighting: settingsSchema.shape.lighting,
+      environment: settingsSchema.shape.environment,
+    }).optional(),
     schemaVersion: z.literal(1),
     id: identifier,
     name: z.string().min(1).max(200),
@@ -201,7 +291,7 @@ export const projectSchema = z
   .strict();
 
 function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
+  if (!condition) throw new DomainError(message, 'VALIDATION_ERROR');
 }
 
 function uniqueIds(items: { id: string }[], kind: string) {
@@ -219,6 +309,7 @@ function checkKeyframes(frames: { id: string; time: number }[], owner: string) {
 /** Parse first, then verify relationships so imported and commanded projects share invariants. */
 export function validateProject(input: unknown): Project {
   const p = projectSchema.parse(input);
+  validateLightingPlans(p);
   const entities = [
     ...p.objects,
     ...p.cameras,
@@ -229,16 +320,31 @@ export function validateProject(input: unknown): Project {
     ...p.notes,
   ];
   uniqueIds(entities, 'entity');
+  for (const audio of p.audio) {
+    assert((audio.fadeIn ?? 0) <= audio.duration, `Audio fade-in exceeds clip duration: ${audio.id}`);
+    assert((audio.fadeOut ?? 0) <= audio.duration, `Audio fade-out exceeds clip duration: ${audio.id}`);
+  }
   const objects = new Map(p.objects.map((item) => [item.id, item]));
   const cameras = new Set(p.cameras.map((item) => item.id));
   const shots = new Map(p.shots.map((item) => [item.id, item]));
-  const beats = new Set(p.beats.map((item) => item.id));
   const hasObject = (id: string | null | undefined) => id == null || objects.has(id);
   assert(
     p.sequences.some((s) => s.id === p.activeSequenceId),
     'Active sequence does not exist',
   );
   p.objects.forEach((object) => {
+    validateActorTargets(object, objects);
+    validateFace(object, p);
+    validateMotionObject(object);
+    if (object.physics?.shape === 'mesh')
+      assert(object.physics.mode === 'static', 'Mesh collision shapes require a static rigid body');
+    assert(
+      !object.vehicle || (object.type !== 'actor' && object.type !== 'group'),
+      'Vehicle geometry requires a mesh object',
+    );
+    uniqueIds(object.motionEvents ?? [], `${object.id} motion event`);
+    for (const event of object.motionEvents ?? [])
+      assert(hasObject(event.otherId), `Missing motion event target: ${event.id}`);
     assert(hasObject(object.parentId), `Missing parent for ${object.id}`);
     assert(hasObject(object.attachment?.objectId), `Missing attachment target for ${object.id}`);
     assert(hasObject(object.actor?.lookAtId), `Missing look-at target for ${object.id}`);
@@ -296,7 +402,14 @@ export function validateProject(input: unknown): Project {
   }
   p.cameras.forEach((camera) => {
     checkKeyframes(camera.keyframes, camera.id);
-    const views = [camera, ...camera.keyframes];
+    if (camera.optics) checkKeyframes(camera.optics.keyframes, `${camera.id} optics`);
+    const compositions = Object.values(camera.compositions ?? {});
+    for (const composition of compositions) checkKeyframes(composition.keyframes, `${camera.id} composition`);
+    const views = [
+      camera,
+      ...camera.keyframes,
+      ...compositions.flatMap((value) => [value, ...value.keyframes]),
+    ];
     views.forEach((view) =>
       assert(
         view.position.some((v, i) => Math.abs(v - view.target[i]!) > 1e-6),
@@ -305,20 +418,64 @@ export function validateProject(input: unknown): Project {
     );
   });
   p.shots.forEach((shot) => {
+    assert(
+      p.production || (!shot.sceneId && !shot.performanceId && !shot.storySceneId),
+      `Shot ${shot.id} requires a production library`,
+    );
+    const shotProject = resolveShotProject(p, shot);
+    const shotObjects = new Set(shotProject.objects.map((object) => object.id));
+    const shotBeats = new Set(shotProject.beats.map((beat) => beat.id));
     assert(cameras.has(shot.cameraId), `Missing camera for ${shot.id}`);
+    const optics = p.cameras.find((camera) => camera.id === shot.cameraId)?.optics;
+    for (const focus of optics ? [optics, ...optics.keyframes] : [])
+      assert(
+        !focus.focusTargetId || shotObjects.has(focus.focusTargetId),
+        `Missing focus target for shot ${shot.id}`,
+      );
     assert(shot.sourceOut > shot.sourceIn, `Shot ${shot.id} must have positive duration`);
     assert(
-      shot.subjectIds.every(hasObject) && shot.hiddenIds.every(hasObject),
+      shot.subjectIds.every((id) => shotObjects.has(id)) && shot.hiddenIds.every((id) => shotObjects.has(id)),
       `Missing shot object for ${shot.id}`,
     );
-    assert(shot.beatId === null || beats.has(shot.beatId), `Missing beat for ${shot.id}`);
+    assert(shot.beatId === null || shotBeats.has(shot.beatId), `Missing beat for ${shot.id}`);
   });
   p.sequences.forEach((sequence) => {
     uniqueIds(sequence.clips, `${sequence.id} clip`);
+    for (const issue of transitionIssues(sequence, shots)) assert(false, issue);
     sequence.clips.forEach((clip) => {
       const shot = shots.get(clip.shotId);
       assert(shot, `Missing shot for clip ${clip.id}`);
       assert(clip.sourceOut > clip.sourceIn, `Clip ${clip.id} must have positive duration`);
+      if (clip.retiming) {
+        for (const segment of clip.retiming.segments) {
+          assert(
+            (segment.curveOut ?? 1) > (segment.curveIn ?? 0),
+            'Speed segment curveOut must exceed curveIn',
+          );
+          assert(
+            segment.easing !== 'constant' || segment.fromSpeed === segment.toSpeed,
+            'Constant speed segment endpoints must match',
+          );
+        }
+        assert(
+          Math.abs(retimingSourceDuration(clip.retiming) - (clip.sourceOut - clip.sourceIn)) <
+            1e-6 * Math.max(1, clip.sourceOut - clip.sourceIn),
+          `Clip ${clip.id} speed curve must integrate to its source interval`,
+        );
+        assert(
+          clip.retiming.audio !== 'follow' || !hasSpeedRamp(clip.retiming),
+          'Continuously ramped clips require warp or mute source audio; constant-speed follow preserves pitch',
+        );
+      }
+      assert(clipDuration(clip) <= 86400, `Clip ${clip.id} edit duration exceeds 24 hours`);
+      if (clip.cameraTiming?.mode === 'independent') {
+        const cameraEnd =
+          (clip.cameraTiming.sourceIn ?? clip.sourceIn) + clipDuration(clip) * (clip.cameraTiming.rate ?? 1);
+        assert(
+          cameraEnd >= 0 && cameraEnd <= 86400,
+          `Clip ${clip.id} camera time must remain inside 0..86400 seconds`,
+        );
+      }
       assert(
         clip.sourceIn >= shot.sourceIn && clip.sourceOut <= shot.sourceOut,
         `Clip ${clip.id} falls outside shot source range`,
@@ -341,5 +498,7 @@ export function validateProject(input: unknown): Project {
     'Axis targets must be actors',
   );
   assert(new Set(p.settings.axisActorIds).size === p.settings.axisActorIds.length, 'Axis actors must differ');
+  validateSynchronization(p);
+  validateProduction(p, validateProject);
   return p;
 }

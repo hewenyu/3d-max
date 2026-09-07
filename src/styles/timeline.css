@@ -89,9 +89,13 @@
 }
 .timeline-inner {
   min-width: 680px;
+  min-height: 143px;
   height: 100%;
   display: flex;
   padding: 0 16px 0 0;
+}
+.timeline.has-events .timeline-inner {
+  min-height: 174px;
 }
 .track-labels {
   width: 110px;
@@ -122,6 +126,9 @@
 .shot-track-label span {
   margin-left: auto;
   color: #738581;
+}
+.timeline.has-events .shot-track-label {
+  height: calc(100% - 116px);
 }
 .track-label {
   height: 31px;
@@ -223,7 +230,8 @@
   font-size: 9px;
 }
 .beat-track,
-.animation-track {
+.animation-track,
+.event-track {
   height: 31px;
   flex: 0 0 31px;
   position: relative;
@@ -232,6 +240,24 @@
 }
 .animation-track {
   background: #22292b;
+}
+.timeline-event {
+  position: absolute;
+  top: 5px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #e2c98d;
+  background: #3a392e;
+  border: 1px solid #77724b;
+  border-radius: 3px;
+  transform: translateX(-50%);
+}
+.timeline-event:hover {
+  color: #fff4d0;
+  border-color: #c8b16e;
 }
 .beat-marker {
   position: absolute;

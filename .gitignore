@@ -2,6 +2,7 @@ node_modules/
 dist/
 .data/
 test-results/
+test-results-production/
 playwright-report/
 .DS_Store
 *.log

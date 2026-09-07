@@ -6,10 +6,12 @@ import { resolve } from 'node:path';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import { z } from 'zod';
 import type { Project, RenderJob, RenderOptions } from '../shared/types.ts';
+import { sequenceDuration } from '../shared/timeline.ts';
 import type { ServerConfig } from './config.ts';
 import type { Store } from './store.ts';
 import { ApiError } from './errors.ts';
 import { audioSegments } from './audio.ts';
+import { prepareWarpAudio } from './warp-audio.ts';
 import { encoderArguments } from './encoder.ts';
 
 export const renderOptionsSchema = z
@@ -77,7 +79,7 @@ export function renderDuration(project: Project, options: RenderOptions) {
     (item) => item.id === (options.sequenceId || project.activeSequenceId),
   );
   if (!sequence) throw new ApiError('NOT_FOUND', 'Sequence not found', 404);
-  return sequence.clips.reduce((sum, clip) => sum + clip.sourceOut - clip.sourceIn, 0);
+  return sequenceDuration(project, sequence.id);
 }
 
 export function renderDimensions(aspect: NonNullable<RenderOptions['aspect']>, resolution: number) {
@@ -252,6 +254,7 @@ export class RenderService {
     this.store.assertAssets(project);
     const options: RenderOptions = {
       ...parsed,
+      projectId: project.id,
       fps: parsed.fps || project.settings.fps,
       resolution: parsed.resolution || project.settings.resolution,
       aspect: parsed.aspect || project.settings.aspect,
@@ -265,6 +268,11 @@ export class RenderService {
       throw new ApiError('INVALID_DURATION', 'Export must contain 1 to 18000 frames');
     const job: RenderJob = {
       id: randomUUID(),
+      name: `${project.name} / ${
+        options.shotId
+          ? project.shots.find((shot) => shot.id === options.shotId)!.name
+          : project.sequences.find((sequence) => sequence.id === options.sequenceId)!.name
+      }`,
       status: 'queued',
       progress: 0,
       frame: 0,
@@ -317,6 +325,7 @@ export class RenderService {
     const active: ActiveRender = { cancelled: false };
     this.active.set(id, active);
     const output = resolve(this.config.dataDir, 'renders', `${id}.mp4`);
+    const warpPath = resolve(this.config.dataDir, 'renders', `${id}.audio.wav`);
     const update = (patch: Partial<RenderJob>) => {
       job = { ...job, ...patch };
       this.store.updateJob(job);
@@ -328,7 +337,15 @@ export class RenderService {
       active.page = await this.page(project, width, height);
       if (active.cancelled) return;
       const duration = job.totalFrames / job.options.fps!;
-      const args = encoderArguments(job, audioSegments(project, job.options, duration, this.store), output);
+      const segments = audioSegments(project, job.options, duration, this.store);
+      const warped = await boundedPageTask(
+        active.page,
+        prepareWarpAudio(active.page, project, job.options, duration, warpPath),
+        'Audio rendering',
+      );
+      if (active.cancelled) return;
+      if (warped) segments.push(warped);
+      const args = encoderArguments(job, segments, output);
       const process = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
       active.process = process;
       let errorOutput = '';
@@ -383,6 +400,7 @@ export class RenderService {
       await completion?.catch(() => {});
       await active.page?.close().catch(() => {});
       this.active.delete(id);
+      await unlink(warpPath).catch(() => {});
       if (this.store.job(id).status !== 'completed') await unlink(output).catch(() => {});
     }
   }

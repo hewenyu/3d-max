@@ -1,5 +1,7 @@
 # Project Goal and Delivery Plan
 
+This document records the historical first-version delivery at commit `3743894`. It is not completion evidence for the current full goal. The active objective is `full-goal.md`; current scope and evidence are tracked in `full-delivery-matrix.md`.
+
 Build a usable, modular Web 3D white-model director previs application with a shared UI/MCP editing model and deterministic MP4 export. The product stops at video export.
 
 User-added completion requirements: SQLite persistence, standardized TypeScript code, clear module boundaries, and a maximum of 1000 lines per source file. These requirements are part of the active project goal.

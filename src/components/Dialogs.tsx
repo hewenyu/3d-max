@@ -7,6 +7,7 @@ import {
   Film,
   LoaderCircle,
   Plug,
+  Play,
   RotateCcw,
   Square,
 } from 'lucide-react';
@@ -15,6 +16,9 @@ import type { EditorActions } from '../useEditor';
 import { api, startRender } from '../api';
 import { Field, IconButton, Modal, TextInput } from './Controls';
 import { sampleTimeline, sequenceDuration } from '../../shared/timeline';
+import { VideoPlayer } from './VideoPlayer';
+import { clipDuration } from '../../shared/time-map';
+import { audioPlacements } from '../../shared/audio-plan';
 
 const jobLabels: Record<RenderJob['status'], string> = {
   queued: '等待中',
@@ -24,6 +28,17 @@ const jobLabels: Record<RenderJob['status'], string> = {
   failed: '失败',
   cancelled: '已取消',
 };
+type ExportFormat = Pick<RenderOptions, 'aspect' | 'fps' | 'resolution' | 'includeAudio' | 'burnIn'>;
+
+function exportFormat(options: RenderOptions, project: Project): ExportFormat {
+  return {
+    aspect: options.aspect ?? project.settings.aspect,
+    fps: options.fps ?? project.settings.fps,
+    resolution: options.resolution ?? project.settings.resolution,
+    includeAudio: options.includeAudio ?? false,
+    burnIn: options.burnIn ?? false,
+  };
+}
 
 export function ExportDialog({
   project,
@@ -36,21 +51,27 @@ export function ExportDialog({
   editor: EditorActions;
   onClose: () => void;
 }) {
-  const [options, setOptions] = useState<RenderOptions>({
-    aspect: project.settings.aspect,
-    fps: project.settings.fps,
-    resolution: project.settings.resolution,
-    includeAudio: false,
-    burnIn: false,
-  });
+  const [options, setOptions] = useState<ExportFormat>(() => exportFormat({}, project));
   const [scope, setScope] = useState('sequence');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
-  const duration = scope === 'shot' && shot ? shot.sourceOut - shot.sourceIn : sequenceDuration(project);
+  const [playingJob, setPlayingJob] = useState<RenderJob | null>(null);
+  const [visibleJobs, setVisibleJobs] = useState(8);
+  const duration = scope === 'shot' ? (shot ? shot.sourceOut - shot.sourceIn : 0) : sequenceDuration(project);
+  const availableAudio =
+    audioPlacements(
+      project,
+      {
+        includeAudio: true,
+        ...(scope === 'shot' && shot ? { shotId: shot.id } : { sequenceId: project.activeSequenceId }),
+      },
+      duration,
+    ).length > 0;
   const start = async () => {
     setStarting(true);
     setError('');
     try {
+      if (scope === 'shot' && !shot) throw new Error('当前镜头已变化，请重新选择导出范围');
       const job = await startRender({
         ...options,
         projectId: project.id,
@@ -72,146 +93,184 @@ export function ExportDialog({
       setError((e as Error).message);
     }
   };
+  const retry = async (job: RenderJob) => {
+    setStarting(true);
+    setError('');
+    setOptions(exportFormat(job.options, project));
+    try {
+      const next = await startRender({
+        ...job.options,
+        projectId: project.id,
+        expectedRevision: project.revision,
+      });
+      editor.setJobs((previous) => [next, ...previous.filter((item) => item.id !== next.id)]);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setStarting(false);
+    }
+  };
   return (
-    <Modal title="导出白模视频" onClose={onClose}>
-      <div className="modal-content">
-        <div className="export-summary">
-          <Film size={25} />
-          <div>
-            <strong>{project.name}</strong>
-            <span>MP4 · H.264 · {duration.toFixed(2)} s</span>
+    <Modal title={playingJob ? '已导出视频' : '导出白模视频'} onClose={onClose} wide={!!playingJob}>
+      {playingJob ? (
+        <VideoPlayer job={playingJob} onBack={() => setPlayingJob(null)} />
+      ) : (
+        <div className="modal-content">
+          <div className="export-summary">
+            <Film size={25} />
+            <div>
+              <strong>{project.name}</strong>
+              <span>MP4 · H.264 · {duration.toFixed(2)} s</span>
+            </div>
+            <span className="format-badge">白模</span>
           </div>
-          <span className="format-badge">白模</span>
-        </div>
-        <Field label="导出范围">
-          <select value={scope} onChange={(e) => setScope(e.target.value)}>
-            <option value="sequence">完整镜头序列</option>
-            <option value="shot" disabled={!shot}>
-              当前镜头
-            </option>
-          </select>
-        </Field>
-        <div className="two-fields">
-          <Field label="画幅">
-            <select
-              aria-label="导出画幅"
-              value={options.aspect}
-              onChange={(e) => setOptions({ ...options, aspect: e.target.value as RenderOptions['aspect'] })}
-            >
-              <option value="16:9">16:9 横屏</option>
-              <option value="9:16">9:16 竖屏</option>
-              <option value="1:1">1:1 方形</option>
+          <Field label="导出范围">
+            <select aria-label="导出范围" value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="sequence">完整镜头序列</option>
+              <option value="shot" disabled={!shot}>
+                当前镜头
+              </option>
             </select>
           </Field>
-          <Field label="分辨率">
+          <div className="two-fields">
+            <Field label="画幅">
+              <select
+                aria-label="导出画幅"
+                value={options.aspect}
+                onChange={(e) =>
+                  setOptions({ ...options, aspect: e.target.value as RenderOptions['aspect'] })
+                }
+              >
+                <option value="16:9">16:9 横屏</option>
+                <option value="9:16">9:16 竖屏</option>
+                <option value="1:1">1:1 方形</option>
+              </select>
+            </Field>
+            <Field label="分辨率">
+              <select
+                value={options.resolution}
+                onChange={(e) => setOptions({ ...options, resolution: Number(e.target.value) as 720 | 1080 })}
+              >
+                <option value={720}>720p</option>
+                <option value={1080}>1080p</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="帧率">
             <select
-              value={options.resolution}
-              onChange={(e) => setOptions({ ...options, resolution: Number(e.target.value) as 720 | 1080 })}
+              value={options.fps}
+              onChange={(e) => setOptions({ ...options, fps: Number(e.target.value) })}
             >
-              <option value={720}>720p</option>
-              <option value={1080}>1080p</option>
+              <option value={24}>24 fps</option>
+              <option value={25}>25 fps</option>
+              <option value={30}>30 fps</option>
             </select>
           </Field>
-        </div>
-        <Field label="帧率">
-          <select
-            value={options.fps}
-            onChange={(e) => setOptions({ ...options, fps: Number(e.target.value) })}
+          <Field label="临时对白">
+            <input
+              type="checkbox"
+              checked={options.includeAudio}
+              aria-label="导出包含音轨"
+              disabled={!availableAudio}
+              onChange={(e) => setOptions({ ...options, includeAudio: e.target.checked })}
+            />
+          </Field>
+          <Field label="审片时间码">
+            <input
+              type="checkbox"
+              checked={options.burnIn}
+              onChange={(e) => setOptions({ ...options, burnIn: e.target.checked })}
+            />
+          </Field>
+          {error && (
+            <div className="inline-error" role="alert">
+              {error}
+            </div>
+          )}
+          <button
+            className="primary-button full-width"
+            onClick={() => void start()}
+            disabled={starting || !duration}
           >
-            <option value={24}>24 fps</option>
-            <option value={25}>25 fps</option>
-            <option value={30}>30 fps</option>
-          </select>
-        </Field>
-        <Field label="临时对白">
-          <input
-            type="checkbox"
-            checked={options.includeAudio}
-            disabled={!project.audio.length}
-            onChange={(e) => setOptions({ ...options, includeAudio: e.target.checked })}
-          />
-        </Field>
-        <Field label="审片时间码">
-          <input
-            type="checkbox"
-            checked={options.burnIn}
-            onChange={(e) => setOptions({ ...options, burnIn: e.target.checked })}
-          />
-        </Field>
-        {error && (
-          <div className="inline-error" role="alert">
-            {error}
-          </div>
-        )}
-        <button
-          className="primary-button full-width"
-          onClick={() => void start()}
-          disabled={starting || !duration}
-        >
-          {starting ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}开始导出
-          <span>{Math.ceil(duration * (options.fps ?? 24) - 1e-8)} 帧</span>
-        </button>
-        {editor.jobs.length > 0 && (
-          <div className="render-jobs">
-            <h3>导出记录</h3>
-            {editor.jobs.slice(0, 8).map((job) => (
-              <article className="render-job" key={job.id}>
-                <div className="row">
-                  {job.status === 'completed' ? (
-                    <CheckCircle2 size={15} className="success" />
-                  ) : ['queued', 'rendering', 'encoding'].includes(job.status) ? (
-                    <LoaderCircle size={15} className="spin" />
-                  ) : (
-                    <Film size={15} />
-                  )}
-                  <strong>{jobLabels[job.status]}</strong>
-                  <span className="muted small">r{job.projectRevision}</span>
-                  <span className="flex-spacer" />
-                  {job.url && (
-                    <a className="icon-button" href={job.url} download aria-label="下载 MP4" title="下载 MP4">
-                      <Download size={16} />
-                    </a>
-                  )}
-                  {['queued', 'rendering', 'encoding'].includes(job.status) && (
-                    <IconButton icon={Square} label="取消导出" onClick={() => void cancel(job)} />
-                  )}
-                  {job.status === 'failed' && (
-                    <IconButton
-                      icon={RotateCcw}
-                      label="用当前项目版本重试导出"
-                      disabled={!!job.options.projectId && job.options.projectId !== project.id}
-                      onClick={() => {
-                        setOptions(job.options);
-                        void startRender({
-                          ...job.options,
-                          projectId: project.id,
-                          expectedRevision: project.revision,
-                        })
-                          .then((next) => editor.setJobs((previous) => [next, ...previous]))
-                          .catch((e) => setError(e.message));
-                      }}
-                    />
-                  )}
-                </div>
-                <progress
-                  max={1}
-                  value={
-                    job.status === 'completed' ? 1 : job.progress > 1 ? job.progress / 100 : job.progress
-                  }
-                />
-                <div className="row small muted">
-                  <span>
-                    {job.frame} / {job.totalFrames} 帧
-                  </span>
-                  <span className="flex-spacer" />
-                  <span>{new Date(job.createdAt).toLocaleTimeString('zh-CN')}</span>
-                </div>
-                {job.error && <p className="inline-error">{job.error}</p>}
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
+            {starting ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}开始导出
+            <span>{Math.ceil(duration * (options.fps ?? 24) - 1e-8)} 帧</span>
+          </button>
+          {editor.jobs.length > 0 && (
+            <div className="render-jobs">
+              <h3>导出记录</h3>
+              {editor.jobs.slice(0, visibleJobs).map((job) => (
+                <article className="render-job" key={job.id}>
+                  {job.name && <h4 className="render-job-name">{job.name}</h4>}
+                  <div className="row">
+                    {job.status === 'completed' ? (
+                      <CheckCircle2 size={15} className="success" />
+                    ) : ['queued', 'rendering', 'encoding'].includes(job.status) ? (
+                      <LoaderCircle size={15} className="spin" />
+                    ) : (
+                      <Film size={15} />
+                    )}
+                    <strong>{jobLabels[job.status]}</strong>
+                    <span className="muted small">r{job.projectRevision}</span>
+                    <span className="flex-spacer" />
+                    {job.status === 'completed' && (
+                      <button className="text-button play-export-button" onClick={() => setPlayingJob(job)}>
+                        <Play size={14} />
+                        播放视频
+                      </button>
+                    )}
+                    {job.url && (
+                      <a
+                        className="icon-button"
+                        href={job.url}
+                        download
+                        aria-label="下载 MP4"
+                        title="下载 MP4"
+                      >
+                        <Download size={16} />
+                      </a>
+                    )}
+                    {['queued', 'rendering', 'encoding'].includes(job.status) && (
+                      <IconButton icon={Square} label="取消导出" onClick={() => void cancel(job)} />
+                    )}
+                    {job.status === 'failed' && (
+                      <IconButton
+                        icon={RotateCcw}
+                        label="用当前项目版本重试导出"
+                        disabled={
+                          starting || (!!job.options.projectId && job.options.projectId !== project.id)
+                        }
+                        onClick={() => void retry(job)}
+                      />
+                    )}
+                  </div>
+                  <progress
+                    max={1}
+                    value={
+                      job.status === 'completed' ? 1 : job.progress > 1 ? job.progress / 100 : job.progress
+                    }
+                  />
+                  <div className="row small muted">
+                    <span>
+                      {job.frame} / {job.totalFrames} 帧
+                    </span>
+                    <span className="flex-spacer" />
+                    <span>{new Date(job.createdAt).toLocaleTimeString('zh-CN')}</span>
+                  </div>
+                  {job.error && <p className="inline-error">{job.error}</p>}
+                </article>
+              ))}
+              {editor.jobs.length > visibleJobs && (
+                <button
+                  className="text-button full-width"
+                  onClick={() => setVisibleJobs((count) => count + 8)}
+                >
+                  更多导出记录
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -353,7 +412,7 @@ export function CutReviewDialog({
   let running = 0;
   const cuts =
     sequence?.clips.slice(0, -1).map((clip) => {
-      running += clip.sourceOut - clip.sourceIn;
+      running += clipDuration(clip);
       return running;
     }) ?? [];
   const nearest = cuts.reduce(

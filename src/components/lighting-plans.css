@@ -1,0 +1,15 @@
+.lighting-actions {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0;
+}
+.lighting-usage {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  max-height: 96px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}

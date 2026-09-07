@@ -34,13 +34,26 @@ export function Stage({
   const element = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onSelect, editor });
   callbacks.current = { onSelect, editor };
-  const state = useRef({ time, mode, project });
-  state.current = { time, mode, project };
+  const state = useRef({ time, mode, project, selected });
+  state.current = { time, mode, project, selected };
   useEffect(() => {
     if (!element.current) return;
     const engine = new SceneEngine(element.current, {
       interactive: true,
-      onSelect: (id) => callbacks.current.onSelect(id ? [id] : []),
+      onSelect: (id, additive) => {
+        const selected = state.current.selected;
+        callbacks.current.onSelect(
+          id
+            ? additive
+              ? selected.includes(id)
+                ? selected.filter((item) => item !== id)
+                : [...selected, id]
+              : [id]
+            : additive
+              ? selected
+              : [],
+        );
+      },
       onTransform: (id, patch) => {
         const project = state.current.project;
         const object = project.objects.find((item) => item.id === id);
@@ -74,14 +87,21 @@ export function Stage({
   }, [engineRef]);
   useEffect(() => {
     const engine = engineRef.current;
+    let current = true;
     if (engine)
       void engine
         .setProject(project)
         .then(() => {
+          if (!current || engineRef.current !== engine) return;
           engine.setView(state.current.mode);
           engine.setTime(state.current.time);
         })
-        .catch((e) => callbacks.current.editor.setError(e.message));
+        .catch((e) => {
+          if (current) callbacks.current.editor.setError(e.message);
+        });
+    return () => {
+      current = false;
+    };
   }, [project, engineRef]);
   useEffect(() => {
     engineRef.current?.setTime(time);

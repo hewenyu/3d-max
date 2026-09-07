@@ -13,16 +13,24 @@
     "mcp": "tsx server/stdio.ts",
     "test": "tsx --test tests/*.test.ts",
     "test:e2e": "playwright test",
+    "test:render": "node scripts/render-smoke.mjs",
+    "test:production": "playwright test --config playwright.production.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
+    "@gltf-transform/core": "^4.5.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "dequal": "^2.0.3",
     "express": "^5.1.0",
+    "fountain-js": "^1.2.4",
     "lucide-react": "^0.468.0",
     "multer": "^2.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "three": "^0.180.0",
+    "three-bvh-csg": "^0.0.18",
+    "three-subdivide": "^1.1.5",
     "zod": "^3.25.76"
   },
   "devDependencies": {

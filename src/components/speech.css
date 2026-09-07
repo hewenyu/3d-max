@@ -1,0 +1,45 @@
+.speech-panel {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  margin-bottom: 14px;
+}
+.speech-panel > .row strong {
+  flex: 1;
+  font-size: 12px;
+}
+.speech-panel fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.speech-panel select,
+.speech-panel textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.speech-panel textarea {
+  resize: vertical;
+  min-height: 80px;
+  padding: 8px;
+}
+.speech-diagnostic {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.speech-diagnostic[role='alert'] {
+  color: #ba4343;
+}
+.speech-result {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.speech-result audio {
+  width: 100%;
+  height: 36px;
+}

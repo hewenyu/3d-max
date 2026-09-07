@@ -1,3 +1,13 @@
+import type { ModelingData } from './modeling';
+import type { ProductionState } from './production';
+import type { ActorAnimation } from './actor-animation';
+import type { EffectSettings, MotionEvent, MotionPath, VehicleSettings } from './motion';
+import type { RigidBodySettings } from './physics';
+import type { Aspect, CameraComposition, CameraOptics, SafeArea } from './camera-optics';
+import type { ContinuityState } from './continuity-types';
+import type { SynchronizationGroup } from './synchronization';
+import type { FaceAnimation, ModelMorph } from './face-animation';
+
 export type Vec3 = [number, number, number];
 export type ObjectType =
   | 'box'
@@ -53,10 +63,26 @@ export interface SceneObject {
   locked: boolean;
   tone: string;
   keyframes: ObjectKeyframe[];
-  actor?: { action: Action; speed: number; pose: ActorPose; lookAtId: string | null };
+  actor?: {
+    action: Action;
+    speed: number;
+    pose: ActorPose;
+    lookAtId: string | null;
+    animation?: ActorAnimation;
+    face?: FaceAnimation;
+  };
   attachment?: Attachment | null;
   assetUrl?: string;
   animationName?: string;
+  animationIndex?: number | null;
+  morph?: ModelMorph;
+  modeling?: ModelingData;
+  motion?: MotionPath;
+  vehicle?: VehicleSettings;
+  physics?: RigidBodySettings;
+  motionEvents?: MotionEvent[];
+  effect?: EffectSettings;
+  rotationInterpolation?: 'linear' | 'quaternion';
 }
 export interface CameraKeyframe {
   id: string;
@@ -67,6 +93,8 @@ export interface CameraKeyframe {
   easing: 'linear' | 'smooth' | 'step';
 }
 export interface ShotCamera {
+  optics?: CameraOptics;
+  compositions?: Partial<Record<Aspect, CameraComposition>>;
   id: string;
   name: string;
   position: Vec3;
@@ -76,6 +104,10 @@ export interface ShotCamera {
   keyframes: CameraKeyframe[];
 }
 export interface Shot {
+  lightingPlanId?: string;
+  sceneId?: string;
+  performanceId?: string;
+  storySceneId?: string;
   id: string;
   name: string;
   cameraId: string;
@@ -92,6 +124,28 @@ export interface SequenceClip {
   shotId: string;
   sourceIn: number;
   sourceOut: number;
+  retiming?: ClipRetiming;
+  cameraTiming?: CameraTiming;
+  fadeIn?: number;
+  fadeOut?: number;
+  transitionIn?: import('./transitions').DissolveTransition;
+}
+export interface SpeedSegment {
+  duration: number;
+  fromSpeed: number;
+  toSpeed: number;
+  easing: 'constant' | 'linear' | 'smooth';
+  curveIn?: number;
+  curveOut?: number;
+}
+export interface ClipRetiming {
+  segments: SpeedSegment[];
+  audio: 'follow' | 'warp' | 'mute';
+}
+export interface CameraTiming {
+  mode: 'source' | 'independent';
+  sourceIn?: number;
+  rate?: number;
 }
 export interface Sequence {
   id: string;
@@ -111,6 +165,9 @@ export interface Beat {
   locked: boolean;
 }
 export interface AudioClip {
+  fadeIn?: number;
+  fadeOut?: number;
+  fadeCurve?: 'linear' | 'equalPower';
   id: string;
   name: string;
   url: string;
@@ -129,6 +186,9 @@ export interface DirectorNote {
   text: string;
 }
 export interface ProjectSettings {
+  lightingPlanId?: string;
+  environment?: { ground: boolean; background: string; groundTone: string };
+  safeArea?: SafeArea;
   fps: number;
   aspect: '16:9' | '9:16' | '1:1';
   resolution: 720 | 1080;
@@ -136,6 +196,10 @@ export interface ProjectSettings {
   axisActorIds: string[];
 }
 export interface Project {
+  lightingPlans?: import('./lighting-plans').LightingPlan[];
+  continuity?: ContinuityState;
+  synchronization?: SynchronizationGroup[];
+  production?: ProductionState;
   schemaVersion: 1;
   id: string;
   name: string;
@@ -157,6 +221,7 @@ export interface Command {
   payload: Record<string, unknown>;
 }
 export interface CommandRequest {
+  expectedContext?: { sceneId: string | null; performanceId: string | null };
   commands: Command[];
   projectId?: string;
   expectedRevision?: number;
@@ -172,6 +237,10 @@ export interface TimelineSample {
   shot: Shot | null;
   camera: ShotCamera | null;
   sourceTime: number;
+  cameraTime: number;
+  clipTime: number;
+  playbackRate: number;
+  audioMuted: boolean;
   sequenceTime: number;
   duration: number;
   clipStart: number;
@@ -189,6 +258,7 @@ export interface RenderOptions {
 }
 export interface RenderJob {
   id: string;
+  name?: string;
   status: 'queued' | 'rendering' | 'encoding' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   frame: number;

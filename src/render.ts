@@ -1,5 +1,7 @@
-import type { Project } from '../shared/types';
+import type { Project, RenderOptions } from '../shared/types';
 import { SceneEngine } from './engine/SceneEngine';
+import { audioPlacements } from '../shared/audio-plan';
+import { audioBufferChunk, renderWarpAudio } from './audio/warp-audio';
 
 interface FrameOptions {
   sequenceId?: string;
@@ -10,6 +12,12 @@ interface FrameOptions {
 interface RenderBridge {
   load: (project: Project, width: number, height: number) => Promise<void>;
   frame: (time: number, options?: FrameOptions) => Promise<string>;
+  audioPrepare: (
+    options: RenderOptions,
+    duration: number,
+  ) => Promise<{ frames: number; channels: number; sampleRate: number }>;
+  audioChunk: (start: number, count: number) => string;
+  audioRelease: () => void;
 }
 
 declare global {
@@ -34,11 +42,31 @@ export function setupRenderPage(): void {
   const engine = new SceneEngine(container, { interactive: false });
   const composite = document.createElement('canvas');
   let loadedProject: Project | null = null;
+  let renderedAudio: AudioBuffer | null = null;
   let width = 1280;
   let height = 720;
   engine.setHelpers(false);
   engine.setView('camera');
   window.__WHITEFRAME_RENDER__ = {
+    async audioPrepare(options, duration) {
+      if (!loadedProject) throw new Error('Load a project before rendering audio');
+      renderedAudio = await renderWarpAudio(
+        audioPlacements(loadedProject, options, duration).filter((placement) => placement.warp),
+        duration,
+      );
+      return {
+        frames: renderedAudio.length,
+        channels: renderedAudio.numberOfChannels,
+        sampleRate: renderedAudio.sampleRate,
+      };
+    },
+    audioChunk(start, count) {
+      if (!renderedAudio) throw new Error('Prepare audio before reading samples');
+      return audioBufferChunk(renderedAudio, start, count);
+    },
+    audioRelease() {
+      renderedAudio = null;
+    },
     async load(project, nextWidth, nextHeight) {
       if (
         !Number.isInteger(nextWidth) ||

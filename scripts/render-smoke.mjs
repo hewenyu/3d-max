@@ -60,6 +60,7 @@ function launch(args, env) {
 try {
   const port = await freePort();
   const webPort = await freePort();
+  const reviewPort = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const appUrl = `http://127.0.0.1:${webPort}`;
   const env = {
@@ -67,6 +68,8 @@ try {
     WEB_PORT: String(webPort),
     APP_URL: appUrl,
     WHITEFRAME_DATA_DIR: dataDir,
+    WHITEFRAME_REVIEW_PORT: String(reviewPort),
+    WHITEFRAME_REVIEW_URL: `http://127.0.0.1:${reviewPort}`,
   };
   launch(['--import', 'tsx', 'server/index.ts'], env);
   launch(
