@@ -2,7 +2,7 @@
 
 面向导演的 Web 3D 白模预演工作台。人工和外部 AI 共用场景、角色、动作、摄影机与剪辑状态，最终导出白模 MP4 视频。产品流程到视频导出为止。
 
-当前本机交付实例、四部完整影片、项目包和对应验收来源见 [交付入口](docs/delivery-runtime.md)。用户已明确 [产品范围](docs/scope-decisions.md)：暂不要求专业 DCC 扩展、内置聊天或外部生成式 3D 集成，所有 Web 能力需要通过 MCP 使用。[验收矩阵](docs/full-delivery-matrix.md) 记录对应完成状态。
+当前本机交付实例：[http://127.0.0.1:4219](http://127.0.0.1:4219)。四部完整影片、可编辑项目包、MCP 配置和验收来源见 [交付入口](docs/delivery-runtime.md)。按用户明确的 [产品范围](docs/scope-decisions.md)，全部适用要求已通过 [验收矩阵](docs/full-delivery-matrix.md)：专业 DCC 扩展、内置聊天和外部生成式 3D 集成暂不纳入，Web 能力均提供 MCP 等价入口。
 
 ## 运行
 

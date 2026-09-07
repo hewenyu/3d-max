@@ -85,6 +85,8 @@ Current engineering acceptance is in [candidate 10 completion](../.data/full-del
 
 The [current MCP audit](../.data/full-delivery/final-candidate-10/checks-completion/mcp-coverage-current.json) records successful standalone calls for all 165 distinct names across owner and invited-review catalogs; the owner endpoint itself has 164. The current run supplies all of this coverage without copying historical audit entries. Source/build hashes remain unchanged before and after verification.
 
+Implementation commit `ed460d6441ee37da3f6feaf714202599ffec18b1` is pushed to `origin/master`. Its [Git receipt](../.data/full-delivery/final-candidate-10/git-implementation.json) matches all 326 frozen files and the remote commit. Final documentation delivery has a separate `.data/full-delivery/final-candidate-10/git-delivery.json` receipt. All applicable scope rows are accepted in [the final matrix](full-delivery-matrix.md); optional professional systems and built-in/generative assistants remain user-excluded.
+
 ## Historical Evidence
 
 The records below preserve earlier runtime versions and their limitations. Their ports, test counts and commit receipts describe those historical runs; current delivery and source binding are listed above and in the current acceptance matrix.
