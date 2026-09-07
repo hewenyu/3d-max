@@ -21,12 +21,15 @@ import { speechCatalog } from './speech-runtime.ts';
 import { synthesizeSpeech } from './speech-service.ts';
 import { ReviewService } from './review-service.ts';
 import { createReviewApp, installReviewOwnerRoutes, reviewAddress } from './review-routes.ts';
+import { getWorkspaceService } from './workspace-service';
+import { installWorkspaceRoutes } from './workspace-routes';
 
 export function createApp(config: ServerConfig = getConfig()) {
   prepareDirectories(config);
   const store = new Store(config.dataDir, config.token);
   const render = new RenderService(config, store);
   const reviews = new ReviewService(store, config);
+  const workspaces = getWorkspaceService(store);
   const review = reviewAddress(config);
   const app = express();
   app.disable('x-powered-by');
@@ -115,7 +118,12 @@ export function createApp(config: ServerConfig = getConfig()) {
   installPackageRoutes(app, config, store);
   installTemplateRoutes(app, store);
   installReviewOwnerRoutes(app, reviews, review.url);
+  installWorkspaceRoutes(app, workspaces);
   app.post('/api/preview', async (request, response) => response.json(await render.preview(request.body)));
+  app.post('/api/viewport', async (request, response) => response.json(await render.viewport(request.body)));
+  app.post('/api/constraints/inspect', async (request, response) =>
+    response.json(await render.inspectConstraints(request.body)),
+  );
   app.get('/api/renders', (_request, response) => response.json(store.jobs()));
   app.post('/api/renders', (request, response) => response.status(202).json(render.start(request.body)));
   app.get('/api/renders/:id', (request, response) => response.json(store.job(String(request.params.id))));
@@ -207,8 +215,10 @@ export function createApp(config: ServerConfig = getConfig()) {
     render,
     reviews,
     review,
+    workspaces,
     reviewApp: createReviewApp(reviews, review.url),
     async close() {
+      workspaces.close();
       await render.close();
       store.close();
     },

@@ -29,6 +29,10 @@ import { synthesizeSpeech } from './speech-service.ts';
 import { ReviewService } from './review-service.ts';
 import { reviewAddress } from './review-routes.ts';
 import { registerReviewOwnerTools } from './review-mcp.ts';
+import { registerTransferTools } from './transfer-mcp';
+import { getWorkspaceService } from './workspace-service';
+import { registerWorkspaceTools } from './workspace-mcp';
+import { registerViewportTools } from './viewport-mcp';
 import {
   deleteTemplate,
   getTemplate,
@@ -252,7 +256,7 @@ export function createMcpServer(store: Store, render: RenderService, config: Ser
     'project_package_import',
     {
       description:
-        'Restore a portable Whiteframe project package as a new editable project, including assets, undo history and included videos. Provide base64 package bytes (up to 32 MiB encoded); larger packages use browser upload. Existing projects are preserved.',
+        'Restore a portable Whiteframe project package as a new editable project, including assets, undo history and included videos. Provide base64 package bytes (up to 32 MiB encoded); larger packages up to 512 MiB use transfer_begin/chunk/commit. Existing projects are preserved.',
       inputSchema: {
         dataBase64: z
           .string()
@@ -325,6 +329,14 @@ export function createMcpServer(store: Store, render: RenderService, config: Ser
       guard(() =>
         store.commands(args as { commands: Command[]; expectedRevision?: number; requestId?: string }),
       )(),
+  );
+  server.registerTool(
+    'history_status',
+    {
+      description: 'Read whether the active project can undo or redo, without changing history.',
+      inputSchema: {},
+    },
+    guard(() => store.history()),
   );
   server.registerTool(
     'history_undo',
@@ -515,7 +527,7 @@ export function createMcpServer(store: Store, render: RenderService, config: Ser
     'asset_import',
     {
       description:
-        'Upload a GLB/glTF or audio asset from base64 file content. External filesystem paths and remote URLs are not accepted. Maximum encoded content is 32 MiB.',
+        'Upload a supported GLB/glTF model or audio asset from base64 file content. External filesystem paths and remote URLs are not accepted. Maximum encoded content is 32 MiB; use transfer_begin/chunk/commit for the full 100 MiB asset limit.',
       inputSchema: {
         name: z.string().min(1).max(200),
         dataBase64: z
@@ -536,6 +548,9 @@ export function createMcpServer(store: Store, render: RenderService, config: Ser
       })(),
   );
   registerReviewOwnerTools(server, new ReviewService(store, config), reviewAddress(config).url);
+  registerTransferTools(server, store, config);
+  registerWorkspaceTools(server, getWorkspaceService(store));
+  registerViewportTools(server, render);
   return server;
 }
 

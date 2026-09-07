@@ -19,6 +19,8 @@ import { sampleTimeline, sequenceDuration } from '../../shared/timeline';
 import { VideoPlayer } from './VideoPlayer';
 import { clipDuration } from '../../shared/time-map';
 import { audioPlacements } from '../../shared/audio-plan';
+import { useWorkspaceSurface } from '../workspace/Surfaces';
+import { WorkspaceFailure } from '../../shared/workspace';
 
 const jobLabels: Record<RenderJob['status'], string> = {
   queued: '等待中',
@@ -57,6 +59,18 @@ export function ExportDialog({
   const [error, setError] = useState('');
   const [playingJob, setPlayingJob] = useState<RenderJob | null>(null);
   const [visibleJobs, setVisibleJobs] = useState(8);
+  useWorkspaceSurface('export', {
+    read: () => ({ jobId: playingJob?.id ?? null }),
+    apply: (command) => {
+      if (command.type !== 'video' || !command.jobId) return;
+      const job = editor.jobs.find((item) => item.id === command.jobId);
+      if (!job)
+        throw new WorkspaceFailure('RENDER_NOT_FOUND', 'The export is not in the current export list');
+      if (job.status !== 'completed')
+        throw new WorkspaceFailure('RENDER_NOT_READY', 'The export is not completed');
+      setPlayingJob(job);
+    },
+  });
   const duration = scope === 'shot' ? (shot ? shot.sourceOut - shot.sourceIn : 0) : sequenceDuration(project);
   const availableAudio =
     audioPlacements(
@@ -408,6 +422,7 @@ export function CutReviewDialog({
 }) {
   const [frames, setFrames] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [checked, setChecked] = useState<string[]>([]);
   const sequence = project.sequences.find((s) => s.id === project.activeSequenceId);
   let running = 0;
   const cuts =
@@ -421,6 +436,12 @@ export function CutReviewDialog({
   );
   const before = Math.max(0, nearest - 1 / project.settings.fps);
   const after = nearest;
+  useWorkspaceSurface('cut-review', {
+    read: () => ({ time: nearest, checked }),
+    apply: (command) => {
+      if (command.type === 'cut_review' && command.checked) setChecked(command.checked);
+    },
+  });
   useEffect(() => {
     let alive = true;
     void Promise.all(
@@ -464,9 +485,16 @@ export function CutReviewDialog({
           ))}
         </div>
         <div className="review-checks">
-          {['人物左右关系', '注视方向', '动作阶段', '道具状态'].map((label) => (
+          {['人物左右关系', '注视方向', '动作阶段', '道具状态'].map((label, index) => (
             <label key={label}>
-              <input type="checkbox" />
+              <input
+                type="checkbox"
+                checked={checked.includes(['screen-position', 'eyeline', 'action', 'props'][index])}
+                onChange={(event) => {
+                  const id = ['screen-position', 'eyeline', 'action', 'props'][index];
+                  setChecked(event.target.checked ? [...checked, id] : checked.filter((item) => item !== id));
+                }}
+              />
               {label}
             </label>
           ))}

@@ -1,5 +1,5 @@
 import { Camera, DiamondPlus, LockKeyhole, Trash2, UnlockKeyhole } from 'lucide-react';
-import { useState } from 'react';
+import { useWorkspaceInspectorMode } from '../workspace/Surfaces';
 import type { Project, SequenceClip, Shot, ShotCamera, Vec3 } from '../../shared/types';
 import { sampleCamera } from '../../shared/timeline';
 import type { CameraPresetKind } from '../../shared/camera-presets';
@@ -35,7 +35,7 @@ export function CameraInspector({
   onSeek,
   getView,
 }: Props) {
-  const [mode, setMode] = useState<'base' | 'keyframe'>('base');
+  const [mode, setMode] = useWorkspaceInspectorMode();
   const aspect = project.settings.aspect;
   const editingCamera = aspectComposition(camera, aspect);
   const current = mode === 'base' ? editingCamera : sampleCamera(camera, sourceTime, aspect);

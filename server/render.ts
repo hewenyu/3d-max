@@ -7,6 +7,14 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import { z } from 'zod';
 import type { Project, RenderJob, RenderOptions } from '../shared/types.ts';
 import { sequenceDuration } from '../shared/timeline.ts';
+import {
+  constraintInspectSchema,
+  prepareViewport,
+  viewportRequestSchema,
+  type ViewportFrameOptions,
+  type ViewportFrameResult,
+  type ViewportRequest,
+} from '../shared/viewport.ts';
 import type { ServerConfig } from './config.ts';
 import type { Store } from './store.ts';
 import { ApiError } from './errors.ts';
@@ -42,6 +50,7 @@ export type PreviewOptions = z.infer<typeof previewSchema>;
 
 interface RenderBridge {
   load(project: Project, width: number, height: number): Promise<void>;
+  viewport(options: ViewportFrameOptions): Promise<ViewportFrameResult>;
   frame(
     time: number,
     options: { sequenceId?: string; shotId?: string; sourceTime?: number; burnIn?: boolean },
@@ -211,23 +220,122 @@ export class RenderService {
     const duration = renderDuration(project, options);
     if (duration <= 0 || options.time > duration)
       throw new ApiError('INVALID_TIME', 'Preview time is outside the selected sequence or shot');
+    return this.withPreviewPage(project, options.width, options.height, async (page) => ({
+      dataUrl: await this.frame(
+        page,
+        project,
+        Math.min(options.time, Math.max(0, duration - 0.000001)),
+        options,
+      ),
+    }));
+  }
+
+  private async withPreviewPage<T>(
+    project: Project,
+    width: number,
+    height: number,
+    run: (page: Page) => Promise<T>,
+  ) {
+    if (this.stopped) throw new ApiError('RENDER_UNAVAILABLE', 'Renderer is shutting down', 503);
     if (this.previews >= 2) throw new ApiError('PREVIEW_BUSY', 'Two previews are already running', 429);
     this.previews++;
     let page: Page | undefined;
     try {
-      page = await this.page(project, options.width, options.height);
-      return {
-        dataUrl: await this.frame(
-          page,
-          project,
-          Math.min(options.time, Math.max(0, duration - 0.000001)),
-          options,
-        ),
-      };
+      page = await this.page(project, width, height);
+      return await run(page);
     } finally {
-      await page?.close();
-      this.previews--;
+      try {
+        await page?.close();
+      } finally {
+        this.previews--;
+      }
     }
+  }
+
+  async viewport(input: unknown) {
+    return this.observe(viewportRequestSchema.parse(input), true);
+  }
+
+  async inspectConstraints(input: unknown) {
+    const parsed = constraintInspectSchema.parse(input);
+    const result = await this.observe(
+      viewportRequestSchema.parse({
+        ...parsed,
+        view: parsed.context.kind === 'source' && !parsed.context.shotId ? 'edit' : 'camera',
+        width: 64,
+        height: 64,
+      }),
+      false,
+    );
+    return {
+      projectId: result.projectId,
+      projectRevision: result.projectRevision,
+      context: result.context,
+      constraints: result.inspection.constraints,
+    };
+  }
+
+  private async observe(options: ViewportRequest, capture: boolean) {
+    const project = this.store.project();
+    if (options.projectId !== undefined && options.projectId !== project.id)
+      throw new ApiError('PROJECT_CONFLICT', 'The active project changed; read it before observing', 409, {
+        project,
+      });
+    if (options.expectedRevision !== undefined && options.expectedRevision !== project.revision)
+      throw new ApiError(
+        'REVISION_CONFLICT',
+        'Project changed; read the latest revision before observing',
+        409,
+        { project },
+      );
+    if (options.view === 'camera' && options.observation)
+      throw new ApiError('INVALID_VIEWPORT', 'Observation settings require edit or top view');
+    if (options.view === 'top' && (options.observation?.fov !== undefined || options.observation?.orbit))
+      throw new ApiError('INVALID_VIEWPORT', 'Perspective FOV and orbit require edit view');
+    if (options.view === 'edit' && options.observation?.zoom !== undefined)
+      throw new ApiError('INVALID_VIEWPORT', 'Orthographic zoom requires top view');
+    const prepared = prepareViewport(project, options.context);
+    if (capture && options.view === 'camera' && !prepared.context.shotId)
+      throw new ApiError('INVALID_CONTEXT', 'Camera view requires a shot in the selected context');
+    const available = new Set(prepared.project.objects.map((object) => object.id));
+    const missing = options.objectIds?.filter((id) => !available.has(id));
+    if (missing?.length)
+      throw new ApiError('NOT_FOUND', 'Objects are not in the selected scene', 404, { objectIds: missing });
+    this.store.assertAssets(prepared.project);
+    const frame: ViewportFrameOptions = {
+      ...prepared.frame,
+      view: options.view,
+      observation: options.observation,
+      helpers: options.helpers,
+      safeFrame: options.safeFrame,
+      overlays: options.overlays,
+      objectIds: options.objectIds,
+      capture,
+    };
+    return this.withPreviewPage(prepared.project, options.width, options.height, async (page) => {
+      const result = await boundedPageTask(
+        page,
+        page.evaluate(
+          async (settings) =>
+            (window as unknown as { __WHITEFRAME_RENDER__: RenderBridge }).__WHITEFRAME_RENDER__.viewport(
+              settings,
+            ),
+          frame,
+        ),
+        'Viewport observation',
+      );
+      if (
+        capture &&
+        (typeof result.dataUrl !== 'string' || !result.dataUrl.startsWith('data:image/png;base64,'))
+      )
+        throw new ApiError('INVALID_FRAME', 'Renderer did not return a PNG frame', 500);
+      return {
+        projectId: project.id,
+        projectRevision: project.revision,
+        context: prepared.context,
+        ...result,
+      };
+    });
   }
 
   start(input: unknown) {

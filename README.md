@@ -2,7 +2,7 @@
 
 面向导演的 Web 3D 白模预演工作台。人工和外部 AI 共用场景、角色、动作、摄影机与剪辑状态，最终导出白模 MP4 视频。产品流程到视频导出为止。
 
-当前本机交付实例、四部完整影片、项目包和对应验收来源见 [交付入口](docs/delivery-runtime.md)。完整目标的未决范围仍保留在 [验收矩阵](docs/full-delivery-matrix.md)。
+当前本机交付实例、四部完整影片、项目包和对应验收来源见 [交付入口](docs/delivery-runtime.md)。用户已明确 [产品范围](docs/scope-decisions.md)：暂不要求专业 DCC 扩展、内置聊天或外部生成式 3D 集成，所有 Web 能力需要通过 MCP 使用。[验收矩阵](docs/full-delivery-matrix.md) 记录对应完成状态。
 
 ## 运行
 
@@ -55,6 +55,8 @@ PORT=4273 WEB_PORT=5273 APP_URL=http://127.0.0.1:5273 npm run dev
 - 本地临时对白合成，使用已安装的 macOS Say 或 eSpeak NG 语音，生成实际 WAV 并编排对白、音轨与同步关系。
 - 固定成片版本的团队审片、时间点意见与回复、处理状态及审片或只读访问权限。
 - 可保存、复制和编辑的布光方案，支持场景默认与独立镜头覆盖，预览和导出使用同一套光照解析。
+- MCP 工作区控制：读取和设置实际选择、观察视角、预览播放、工具、面板、方案比较与已导出视频播放器，支持明确标签页、版本校验及执行回执。
+- MCP 分块上传与断点续传：资产最高 100 MiB、项目包最高 512 MiB，包含 SHA-256 校验和原子入库；无浏览器时也能渲染任意观察视角并检查全部接触约束。
 
 桌面浏览器提供完整编辑界面。手机适合播放、查看镜头和基础参数调整；精细 3D 操作建议使用鼠标键盘。
 
@@ -98,6 +100,8 @@ stdio 配置指向当前项目；API 服务需先启动：
 3. `camera_motion` 生成可编辑运镜关键帧，`preview_capture` 返回真实 PNG 图片。
 4. 根据预览局部修正；锁定的对象或镜头必须显式解锁后才能编辑。
 5. `render_start` 创建任务，使用 `render_status` 查询并下载，或 `render_cancel` 取消。
+
+需要与当前浏览器协作时，使用 `workspace_list` 找到目标标签页，再用 `workspace_get` 读取选择、视角和播放状态，使用 `workspace_apply` 控制实际界面。`viewport_capture` 返回当前视口的真实 PNG；`scene_view_capture` 与 `contact_constraints_inspect` 不要求打开编辑器。大文件通过 `transfer_begin/chunk/status/commit/cancel` 传入。完整能力映射、参数和重试语义见 [Web 与 MCP 等价说明](docs/web-mcp-parity.md)。
 
 例如生成推进镜头：
 

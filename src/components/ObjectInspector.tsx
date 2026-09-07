@@ -11,6 +11,7 @@ import { MotionPanel } from './MotionPanel';
 import { PhysicsPanel } from './PhysicsPanel';
 import type { EditorActions } from '../useEditor';
 import { Field, IconButton, NumberInput, Section, TextInput, VectorInput, timecode } from './Controls';
+import { useWorkspaceInspectorMode } from '../workspace/Surfaces';
 
 export function ObjectInspector({
   object,
@@ -27,7 +28,7 @@ export function ObjectInspector({
   onSeek: (time: number) => void;
   getConstraints?: (id: string) => ActorConstraintResult[];
 }) {
-  const [mode, setMode] = useState<'base' | 'keyframe'>('base');
+  const [mode, setMode] = useWorkspaceInspectorMode();
   const [diagnostics, setDiagnostics] = useState<ActorConstraintResult[]>([]);
   useEffect(() => {
     if (!object.actor || !getConstraints) return;

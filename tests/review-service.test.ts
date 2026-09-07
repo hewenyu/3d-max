@@ -81,6 +81,36 @@ test('team review isolates invitations, author identity and immutable videos thr
     const reviewer = service.reviews.invite(publication.id, { name: 'Reviewer A', role: 'reviewer' });
     const viewer = service.reviews.invite(publication.id, { name: 'Viewer B', role: 'viewer' });
     const foreign = service.reviews.invite(other.id, { name: 'Reviewer C', role: 'reviewer' });
+    const director = new Client({ name: 'owner-read-parity', version: '1' });
+    clients.push(director);
+    await director.connect(
+      new StreamableHTTPClientTransport(new URL(`${ownerUrl}/mcp`), {
+        requestInit: { headers: { Authorization: `Bearer ${config.token}` } },
+      }),
+    );
+    const ownerCall = async (name: string, args: Record<string, unknown> = {}) => {
+      const response = await director.callTool({ name, arguments: args });
+      assert.ok(!response.isError, JSON.stringify(response));
+      const content = response.content as { type: string; text?: string }[];
+      return JSON.parse(content.find((part) => part.type === 'text')!.text!);
+    };
+    const details = await ownerCall('review_details', { publicationId: publication.id });
+    assert.deepEqual(details, await (await request(`${ownerUrl}/api/reviews/${publication.id}`)).json());
+    assert.deepEqual(
+      details.invites.map((invite: { id: string }) => invite.id),
+      [reviewer.invite.id, viewer.invite.id],
+    );
+    assert.equal(JSON.stringify(details).includes(reviewer.token), false);
+    assert.deepEqual(
+      await ownerCall('history_status'),
+      await (await request(`${ownerUrl}/api/history`)).json(),
+    );
+    service.store.commands({
+      commands: [{ type: 'project.update', payload: { name: 'Later editor revision' } }],
+    });
+    assert.deepEqual(await ownerCall('history_status'), { canUndo: true, canRedo: false });
+    await ownerCall('history_undo', { projectId: project.id });
+    assert.deepEqual(await ownerCall('history_status'), { canUndo: false, canRedo: true });
     assert.equal((await request(`${reviewUrl}/review-api/project`)).status, 401);
     assert.equal(
       (await request(`${reviewUrl}/api/connection`, 'GET', undefined, reviewer.token)).status,
@@ -250,6 +280,10 @@ test('team review isolates invitations, author identity and immutable videos thr
         false,
       );
       assert.equal(
+        catalog.tools.some((tool) => tool.name === 'review_details'),
+        false,
+      );
+      assert.equal(
         catalog.tools.some((tool) => tool.name === 'review_comment_add'),
         identity.invite.role === 'reviewer',
       );
@@ -266,6 +300,11 @@ test('team review isolates invitations, author identity and immutable videos thr
     const serialized = JSON.stringify(service.store.db.prepare('SELECT * FROM review_invites').all());
     assert.equal(serialized.includes(reviewer.token), false);
     service.reviews.revoke(publication.id, viewer.invite.id);
+    const revokedDetails = await ownerCall('review_details', { publicationId: publication.id });
+    assert.equal(
+      revokedDetails.invites.find((invite: { id: string }) => invite.id === viewer.invite.id).revoked,
+      true,
+    );
     assert.equal(
       (await fetch(`${reviewUrl}/review-api/video`, { headers: { Cookie: session } })).status,
       401,

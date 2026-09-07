@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Download, LoaderCircle, RotateCcw } from 'lucide-react';
 import type { RenderJob } from '../../shared/types';
+import { useWorkspaceSurface, settleWorkspace, waitWorkspaceReady } from '../workspace/Surfaces';
+import { WorkspaceFailure, type WorkspaceMedia } from '../../shared/workspace';
 
 function mediaError(error: MediaError | null) {
   if (error?.code === MediaError.MEDIA_ERR_NETWORK) return '视频载入失败，请检查连接后重试。';
@@ -14,6 +16,75 @@ export function VideoPlayer({ job, onBack }: { job: RenderJob; onBack: () => voi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const stream = `/api/renders/${encodeURIComponent(job.id)}/stream${attempt ? `?retry=${attempt}` : ''}`;
+  useWorkspaceSurface('video', {
+    read: (): WorkspaceMedia => {
+      const element = video.current;
+      return {
+        jobId: job.id,
+        time: element?.currentTime ?? 0,
+        duration: Number.isFinite(element?.duration) ? element!.duration : 0,
+        paused: element?.paused ?? true,
+        muted: element?.muted ?? false,
+        volume: element?.volume ?? 1,
+        playbackRate: element?.playbackRate ?? 1,
+        readyState: element?.readyState ?? 0,
+        loading,
+        ended: element?.ended ?? false,
+        error: error || (element?.error ? mediaError(element.error) : null),
+      };
+    },
+    apply: async (command) => {
+      if (command.type === 'fullscreen') {
+        try {
+          if (!video.current) throw new Error('Video player is not ready');
+          if (command.enabled && document.fullscreenElement !== video.current)
+            await video.current.requestFullscreen();
+          else if (!command.enabled && document.fullscreenElement) await document.exitFullscreen();
+          if ((document.fullscreenElement === video.current) !== command.enabled)
+            throw new Error('Browser did not apply video fullscreen');
+        } catch (cause) {
+          throw new WorkspaceFailure(
+            'FULLSCREEN_REJECTED',
+            cause instanceof Error ? cause.message : String(cause),
+          );
+        }
+        return;
+      }
+      if (command.type !== 'video') return;
+      if (command.action === 'retry') {
+        setError('');
+        setLoading(true);
+        setAttempt((value) => value + 1);
+        await settleWorkspace();
+      }
+      await waitWorkspaceReady(
+        () => !!video.current && (video.current.readyState >= 1 || !!video.current.error),
+      );
+      const element = video.current!;
+      if (element.error) throw new WorkspaceFailure('MEDIA_ERROR', mediaError(element.error));
+      if (command.time !== undefined) {
+        if (command.time > element.duration)
+          throw new WorkspaceFailure('INVALID_MEDIA_TIME', 'Time is outside the exported video');
+        element.currentTime = command.time;
+        await waitWorkspaceReady(() => !element.seeking || !!element.error);
+        if (element.error) throw new WorkspaceFailure('MEDIA_ERROR', mediaError(element.error));
+      }
+      if (command.muted !== undefined) element.muted = command.muted;
+      if (command.volume !== undefined) element.volume = command.volume;
+      if (command.playbackRate !== undefined) element.playbackRate = command.playbackRate;
+      if (command.action === 'pause') element.pause();
+      if (command.action === 'play') {
+        try {
+          await element.play();
+        } catch (cause) {
+          throw new WorkspaceFailure(
+            'PLAYBACK_REJECTED',
+            cause instanceof Error ? cause.message : String(cause),
+          );
+        }
+      }
+    },
+  });
   useEffect(() => {
     const element = video.current;
     return () => {

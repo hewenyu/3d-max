@@ -22,6 +22,15 @@ const publicationId = z.string().min(1).max(160);
 
 export function registerReviewOwnerTools(server: McpServer, reviews: ReviewService, url: string) {
   server.registerTool(
+    'review_details',
+    {
+      description:
+        'Read owner review details, including all existing invitations and revocation status, comments and the immutable publication. Invitation tokens are never returned by this read.',
+      inputSchema: { publicationId },
+    },
+    ({ publicationId }) => result(() => reviews.ownerDetails(publicationId)),
+  );
+  server.registerTool(
     'review_list',
     {
       description: 'List immutable exported video revisions published for team review.',

@@ -14,6 +14,7 @@ import type { SpeechCatalog, SpeechResult } from '../shared/speech';
 import type { TemplateContent, TemplateSummary } from '../shared/templates';
 import type { Command, CommandResponse, Project, RenderJob } from '../shared/types';
 import { skinnedModelAsset } from './fixtures/skinned-model';
+import { exerciseTransferCatalog, exerciseWorkspaceCatalog } from './fixtures/mcp-service-parity';
 
 const exec = promisify(execFile);
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -116,6 +117,7 @@ test('every declared MCP service tool succeeds with real media, persistence and 
       expect(await (await request.get('/api/project')).json()).toEqual(project);
     };
     const modelBytes = await catalogModel();
+    evidence.transfer = await exerciseTransferCatalog(call, modelBytes);
     const asset = await call<{ id: string; url: string }>('asset_import', {
       name: 'catalog-performer.glb',
       dataBase64: modelBytes.toString('base64'),
@@ -170,11 +172,14 @@ test('every declared MCP service tool succeeds with real media, persistence and 
       },
     ]);
     const beforeUndo = structuredClone(project);
+    expect(await call('history_status')).toEqual(await (await request.get('/api/history')).json());
+    expect(await call('history_status')).toMatchObject({ canUndo: true, canRedo: false });
     project = await call<Project>('history_undo', {
       projectId: project.id,
       expectedRevision: project.revision,
     });
     expect(project.objects).toHaveLength(0);
+    expect(await call('history_status')).toMatchObject({ canRedo: true });
     project = await call<Project>('history_redo', {
       projectId: project.id,
       expectedRevision: project.revision,
@@ -455,6 +460,10 @@ test('every declared MCP service tool succeeds with real media, persistence and 
         },
       );
       const reviewer = new Client({ name: `mcp-catalog-${role}`, version: '1.0' });
+      const ownerDetails = await call('review_details', { publicationId: publication.id });
+      expect(ownerDetails).toEqual(await (await request.get(`/api/reviews/${publication.id}`)).json());
+      expect(ownerDetails.invites).toContainEqual(invitation.invite);
+      expect(JSON.stringify(ownerDetails)).not.toContain(invitation.token);
       clients.push(reviewer);
       await connect(reviewer, invitation.mcpUrl, invitation.token);
       const tools = await reviewer.listTools();
@@ -489,6 +498,7 @@ test('every declared MCP service tool succeeds with real media, persistence and 
       includeVideos: true,
     });
     const archive = await (await request.get(packaged.url)).body();
+    evidence.workspace = await exerciseWorkspaceCatalog(call, page, project);
     await writeFile(`${directory}/service-project.whiteframe`, archive);
     const restored = await call<{ project: Project; assets: number; videos: number }>(
       'project_package_import',

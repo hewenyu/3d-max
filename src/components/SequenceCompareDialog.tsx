@@ -5,6 +5,7 @@ import type { Project } from '../../shared/types';
 import { SceneEngine } from '../engine/SceneEngine';
 import { IconButton, Modal } from './Controls';
 import './sequence-compare.css';
+import { useWorkspaceSurface, settleWorkspace, waitWorkspaceReady } from '../workspace/Surfaces';
 
 export function SequenceCompareDialog({
   project,
@@ -55,6 +56,33 @@ export function SequenceCompareDialog({
     setPlaying(false);
     setTime(Math.max(0, Math.min(duration, value)));
   };
+  const readyState = useRef(ready);
+  readyState.current = ready;
+  useWorkspaceSurface('comparison', {
+    read: () => ({ leftSequenceId: left, rightSequenceId: right, time, playing, ready }),
+    apply: async (command) => {
+      if (command.type !== 'comparison') return;
+      let nextLeft = command.leftSequenceId ?? left;
+      let nextRight = command.rightSequenceId ?? right;
+      if (command.swap) [nextLeft, nextRight] = [nextRight, nextLeft];
+      setLeft(nextLeft);
+      setRight(nextRight);
+      const nextDuration = Math.max(
+        sequenceDuration(project, nextLeft),
+        sequenceDuration(project, nextRight),
+      );
+      if (command.time !== undefined || command.stepFrames !== undefined)
+        seek(Math.min(nextDuration, command.time ?? time + (command.stepFrames ?? 0) / fps));
+      if (command.action === 'start') seek(0);
+      if (command.action === 'pause') setPlaying(false);
+      if (command.action === 'play') {
+        await settleWorkspace();
+        await waitWorkspaceReady(() => readyState.current.left && readyState.current.right);
+        if (time >= nextDuration && command.time === undefined) setTime(0);
+        setPlaying(true);
+      }
+    },
+  });
   return (
     <Modal title="剪辑方案对比" onClose={onClose} wide>
       <div className="modal-content sequence-compare">

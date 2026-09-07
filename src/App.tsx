@@ -48,8 +48,19 @@ import { ViewportToolsMenu } from './components/ViewportToolsMenu';
 import { ScriptImportDialog } from './components/ScriptImportDialog';
 import { ReviewDialog } from './components/ReviewDialog';
 import type { SceneEngine } from './engine/SceneEngine';
+import { useAppWorkspace } from './workspace/useAppWorkspace';
+import { WorkspaceSurfaceContext, WorkspaceSurfaces } from './workspace/Surfaces';
 
 export default function App() {
+  const surfaces = useRef(new WorkspaceSurfaces()).current;
+  return (
+    <WorkspaceSurfaceContext.Provider value={surfaces}>
+      <EditorWorkspace />
+    </WorkspaceSurfaceContext.Provider>
+  );
+}
+
+function EditorWorkspace() {
   const editor = useEditor();
   const { project } = editor;
   const playback = usePlayback(project);
@@ -80,6 +91,33 @@ export default function App() {
       setRightVisible(true);
     }
   };
+  useAppWorkspace({
+    project,
+    engine,
+    playback,
+    selected,
+    chooseObject,
+    mode,
+    setMode,
+    tool,
+    setTool,
+    snap,
+    setSnap,
+    helpers,
+    setHelpers,
+    safeFrame,
+    setSafeFrame,
+    leftVisible,
+    setLeftVisible,
+    rightVisible,
+    setRightVisible,
+    mobilePanel,
+    setMobilePanel,
+    inspectorTab,
+    setInspectorTab,
+    dialog,
+    setDialog,
+  });
   const chooseClip = (clip: SequenceClip, start: number) => {
     playback.setPlaying(false);
     playback.seek(start);
@@ -408,7 +446,12 @@ export default function App() {
           <ViewportToolsMenu
             actions={[
               { label: '撤销', icon: Undo2, disabled: !editor.history.canUndo, run: () => editor.undo() },
-              { label: '重做', icon: Redo2, disabled: !editor.history.canRedo, run: () => editor.undo(true) },
+              {
+                label: '重做',
+                icon: Redo2,
+                disabled: !editor.history.canRedo,
+                run: () => editor.undo(true),
+              },
               { label: '移动', icon: Move, active: tool === 'translate', run: () => setTool('translate') },
               { label: '旋转', icon: Rotate3D, active: tool === 'rotate', run: () => setTool('rotate') },
               { label: '缩放', icon: Scaling, active: tool === 'scale', run: () => setTool('scale') },

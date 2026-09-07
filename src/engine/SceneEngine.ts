@@ -12,6 +12,14 @@ import { sceneFarPlane } from '../../shared/scene-framing';
 import { resolveLighting } from '../../shared/lighting-plans';
 import { sampleSequenceOpacity, sampleSequenceTransition } from '../../shared/transitions';
 import { TransitionRenderer } from './TransitionRenderer';
+import {
+  applyObservation,
+  captureCanvas,
+  createSafeOverlay,
+  inspectRenderedObjects,
+  observationState,
+} from './EngineWorkspace';
+import type { WorkspaceCommand } from '../../shared/workspace';
 import { gaitDistance, SceneResourceCache, type SceneBinding, type SceneResources } from './SceneResources';
 
 type ViewMode = 'edit' | 'camera' | 'top';
@@ -181,18 +189,7 @@ export class SceneEngine {
     const axes = new THREE.AxesHelper(0.65);
     axes.position.set(0, 0.006, 0);
     this.helpers.add(axes);
-    this.safeOverlay = document.createElement('div');
-    this.safeOverlay.style.cssText =
-      'pointer-events:none;position:absolute;display:none;border:1px solid rgba(255,255,255,.45);box-sizing:border-box;z-index:2';
-    for (const fraction of [1 / 3, 2 / 3]) {
-      const horizontal = document.createElement('div');
-      horizontal.style.cssText = `position:absolute;left:0;right:0;top:${fraction * 100}%;border-top:1px dashed rgba(255,255,255,.24)`;
-      const vertical = document.createElement('div');
-      vertical.style.cssText = `position:absolute;top:0;bottom:0;left:${fraction * 100}%;border-left:1px dashed rgba(255,255,255,.24)`;
-      this.safeOverlay.append(horizontal, vertical);
-    }
-    if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
-    container.append(this.safeOverlay);
+    this.safeOverlay = createSafeOverlay(container);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     if (options.interactive !== false) {
@@ -439,8 +436,8 @@ export class SceneEngine {
     this.updateSafeFrame();
   }
 
-  focus(id?: string) {
-    const ids = id ? [id] : this.selected;
+  focus(id?: string | string[]) {
+    const ids = Array.isArray(id) ? id : id ? [id] : this.selected;
     const bounds = new THREE.Box3();
     if (ids.length) {
       for (const objectId of ids) {
@@ -533,6 +530,56 @@ export class SceneEngine {
   capture() {
     this.draw();
     return this.canvas.toDataURL('image/png');
+  }
+
+  getObservation() {
+    return observationState(this.editorCamera, this.editorOrbit, this.topCamera, this.topOrbit);
+  }
+
+  setObservation(input: Extract<WorkspaceCommand, { type: 'observation' }>) {
+    const mode = input.view ?? (this.mode === 'top' ? 'top' : 'edit');
+    this.setView(mode);
+    this.settleObservationControls();
+    if (mode === 'top') this.topFocusBounds = null;
+    else this.editorFocusBounds = null;
+    applyObservation(input, mode === 'top' ? this.topCamera : this.editorCamera, this.orbit);
+    this.draw();
+  }
+
+  captureViewport(overlays = false) {
+    const helpers = this.helpers.visible;
+    const transform = this.transform.getHelper().visible;
+    if (!overlays) {
+      this.helpers.visible = false;
+      this.transform.getHelper().visible = false;
+    }
+    this.draw();
+    const result = captureCanvas(
+      this.canvas,
+      this.getFrameRect(),
+      { width: this.width, height: this.height },
+      overlays && this.safeFrameEnabled && this.mode === 'camera'
+        ? (this.project?.settings.safeArea ?? {
+            top: 0.05,
+            right: 0.05,
+            bottom: 0.05,
+            left: 0.05,
+            thirds: true,
+          })
+        : undefined,
+    );
+    this.helpers.visible = helpers;
+    this.transform.getHelper().visible = transform;
+    this.draw();
+    return result;
+  }
+
+  inspectViewport(ids?: string[]) {
+    return {
+      ...inspectRenderedObjects(this.objects, this.constraintResults, ids),
+      frame: this.getFrameRect(),
+      context: this.getRenderContext(),
+    };
   }
 
   getEditorCamera(): { position: Vec3; target: Vec3; fov: number } {

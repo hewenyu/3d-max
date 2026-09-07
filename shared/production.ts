@@ -359,7 +359,7 @@ export function bindShotProduction(
 
 export function resolveShotProject(
   project: ProductionProject,
-  shot: ProductionShot | null,
+  shot: Pick<ProductionShot, 'sceneId' | 'performanceId'> | null,
   options: { useStoredPerformance?: boolean } = {},
 ): Project {
   if (!project.production || !shot?.sceneId) return project;

@@ -55,6 +55,8 @@ const assets: { type: ObjectType; label: string; icon: typeof Box }[] = [
   { type: 'window', label: '窗', icon: Columns3 },
 ];
 
+import { useWorkspaceSurface } from '../workspace/Surfaces';
+
 export function ScenePanel({
   project,
   selected,
@@ -71,6 +73,12 @@ export function ScenePanel({
   onContextChange: () => void;
 }) {
   const [tab, setTab] = useState<'scene' | 'assets' | 'production' | 'templates'>('scene');
+  useWorkspaceSurface('scene', {
+    read: () => ({ tab }),
+    apply: (command) => {
+      if (command.type === 'panels' && command.sceneTab) setTab(command.sceneTab);
+    },
+  });
   const [query, setQuery] = useState('');
   const [multipleSelection, setMultipleSelection] = useState(false);
   const upload = useRef<HTMLInputElement>(null);

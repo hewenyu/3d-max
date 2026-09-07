@@ -151,7 +151,18 @@ async function mediaInfo(path: string, kind: 'audio' | 'video') {
   return duration;
 }
 
-export async function importProjectPackage(store: Store, config: ServerConfig, data: Buffer) {
+export interface PackageImportResult {
+  project: Project;
+  assets: number;
+  videos: number;
+}
+
+export async function importProjectPackage(
+  store: Store,
+  config: ServerConfig,
+  data: Buffer,
+  onCommit?: (result: PackageImportResult) => void,
+) {
   const directory = await mkdtemp(join(tmpdir(), 'whiteframe-package-stage-'));
   const staging = new DatabaseSync(join(directory, 'records.sqlite'));
   staging.exec(
@@ -278,6 +289,12 @@ export async function importProjectPackage(store: Store, config: ServerConfig, d
       store,
       { project, cursor, history: history(), jobs: snapshots() },
       assets,
+      (restored) =>
+        onCommit?.({
+          project: restored,
+          assets: assetIds.size,
+          videos: jobs.filter((job) => job.status === 'completed').length,
+        }),
     );
     committed = true;
     unusedAssetPaths = installed.unusedAssetPaths;

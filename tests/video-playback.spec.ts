@@ -3,6 +3,7 @@ import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { expect, test } from '@playwright/test';
 import { createApp } from '../server/app';
@@ -27,7 +28,10 @@ test.beforeAll(async () => {
     token: 'playback-test',
   };
   service = createApp(config);
-  listener = service.app.listen(0, '127.0.0.1');
+  listener = createServer((request, response) => {
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    service.app(request, response);
+  }).listen(0, '127.0.0.1');
   await new Promise<void>((done) => listener.once('listening', done));
   base = `http://127.0.0.1:${(listener.address() as AddressInfo).port}`;
   config.apiUrl = base;
@@ -103,6 +107,9 @@ test.afterAll(async () => {
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
+    // Event streams must remain streaming; route.fetch waits for the entire response body.
+    if (/^\/api\/workspaces\/[^/]+\/events$/.test(url.pathname))
+      return route.continue({ url: `${base}${url.pathname}${url.search}` });
     if (url.pathname === '/api/events')
       return route.fulfill({
         contentType: 'text/event-stream',

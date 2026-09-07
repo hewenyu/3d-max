@@ -2,6 +2,7 @@ import type { Project, RenderOptions } from '../shared/types';
 import { SceneEngine } from './engine/SceneEngine';
 import { audioPlacements } from '../shared/audio-plan';
 import { audioBufferChunk, renderWarpAudio } from './audio/warp-audio';
+import type { ViewportFrameOptions, ViewportFrameResult } from '../shared/viewport';
 
 interface FrameOptions {
   sequenceId?: string;
@@ -12,6 +13,7 @@ interface FrameOptions {
 interface RenderBridge {
   load: (project: Project, width: number, height: number) => Promise<void>;
   frame: (time: number, options?: FrameOptions) => Promise<string>;
+  viewport: (options: ViewportFrameOptions) => Promise<ViewportFrameResult>;
   audioPrepare: (
     options: RenderOptions,
     duration: number,
@@ -48,6 +50,23 @@ export function setupRenderPage(): void {
   engine.setHelpers(false);
   engine.setView('camera');
   window.__WHITEFRAME_RENDER__ = {
+    async viewport(options) {
+      if (!loadedProject) throw new Error('Load a project before inspecting the viewport');
+      await engine.ready;
+      engine.setView(options.view);
+      engine.setHelpers(options.helpers);
+      engine.setSafeFrame(options.safeFrame);
+      engine.setTime(options.time, options);
+      if (options.observation) {
+        if (options.view === 'camera') throw new Error('Observation overrides require edit or top view');
+        engine.setObservation({ type: 'observation', view: options.view, ...options.observation });
+      }
+      return {
+        ...(options.capture ? { dataUrl: engine.captureViewport(options.overlays) } : {}),
+        observation: engine.getObservation(),
+        inspection: engine.inspectViewport(options.objectIds),
+      };
+    },
     async audioPrepare(options, duration) {
       if (!loadedProject) throw new Error('Load a project before rendering audio');
       renderedAudio = await renderWarpAudio(

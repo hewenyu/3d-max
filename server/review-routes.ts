@@ -26,15 +26,9 @@ export function installReviewOwnerRoutes(app: Express, reviews: ReviewService, u
     response.json({ publications: reviews.publications(), url }),
   );
   app.post('/api/reviews', (request, response) => response.status(201).json(reviews.publish(request.body)));
-  app.get('/api/reviews/:id', (request, response) => {
-    const principal = reviews.owner(String(request.params.id));
-    response.json({
-      principal,
-      publication: reviews.publication(principal.publicationId),
-      comments: reviews.comments(principal),
-      invites: reviews.invites(principal.publicationId),
-    });
-  });
+  app.get('/api/reviews/:id', (request, response) =>
+    response.json(reviews.ownerDetails(String(request.params.id))),
+  );
   app.post('/api/reviews/:id/invites', (request, response) => {
     const result = reviews.invite(String(request.params.id), request.body);
     response

@@ -17,6 +17,8 @@ export default defineConfig({
     '**/export-formats.spec.ts',
     '**/export-retry.spec.ts',
     '**/mcp-service-catalog.spec.ts',
+    '**/workspace.spec.ts',
+    '**/viewport.spec.ts',
     '**/lighting-plans.spec.ts',
   ],
   metadata: { builtFrontend: true },

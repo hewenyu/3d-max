@@ -107,6 +107,16 @@ export class ReviewService {
     return { id: 'owner', name: '导演', role: 'owner', publicationId };
   }
 
+  ownerDetails(publicationId: string) {
+    const principal = this.owner(publicationId);
+    return {
+      principal,
+      publication: this.publication(publicationId),
+      comments: this.comments(principal),
+      invites: this.invites(publicationId),
+    };
+  }
+
   invites(publicationId: string): ReviewInvite[] {
     this.publication(publicationId);
     return (

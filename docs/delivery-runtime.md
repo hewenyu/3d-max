@@ -1,18 +1,18 @@
 # Delivery Runtime
 
-Recorded on 2026-09-07. Candidate 07 is the current local runtime. Its scoped verification, eight actual four-film UI groups and manual screenshot review have passed. The implemented navigation/timeline corrections are committed, pushed and verified. H07/H08 scope decisions and E08 overall acceptance remain open.
+Recorded on 2026-09-07. Candidate 10 is the current served runtime. The user's [scope decisions](scope-decisions.md) resolve H07/H08 and require [full Web/MCP parity](web-mcp-parity.md). Candidate 08 adds those capabilities; candidate 09 changes three production-verification scripts and candidate 10 changes one playback-test proxy. All application, server, engine, dependency and built distribution bytes remain identical across 08/09/10. Final acceptance status is tracked in [full-delivery-matrix.md](full-delivery-matrix.md).
 
 | Entry                                     | Location                                                                     |
 | ----------------------------------------- | ---------------------------------------------------------------------------- |
-| Editor, API and owner MCP                 | [http://127.0.0.1:4217](http://127.0.0.1:4217), MCP path `/mcp`              |
-| Invited team review                       | [http://127.0.0.1:4317](http://127.0.0.1:4317), requires a review invitation |
-| Frozen application                        | `.data/releases/full-candidate-07`                                           |
-| Active SQLite, assets and renders         | `.data/delivery-candidate-07`                                                |
-| Source manifest SHA-256, not a Git commit | `989f1c67a84c51db74e8ba0b0308f022215056c22b65c3fa2df3f9a64fb77dbe`           |
+| Editor, API and owner MCP                 | [http://127.0.0.1:4219](http://127.0.0.1:4219), MCP path `/mcp`              |
+| Invited team review                       | [http://127.0.0.1:4319](http://127.0.0.1:4319), requires a review invitation |
+| Frozen application                        | `.data/releases/full-candidate-10`                                           |
+| Active SQLite, assets and renders         | `.data/delivery-candidate-10`                                                |
+| Source manifest SHA-256, not a Git commit | `df0bdc0861b797fb24fdd4cf2b73ffba689826c05d9297648cc7d69b728c2b90`           |
 
-Paths are relative to `/Users/yueban/code/yuebanhome/3d-max` unless absolute. The [runtime process record](../.data/full-delivery/final-candidate-07/runtime-process.json) records PID 30615 at launch and the addresses; its PID is historical after a restart.
+Paths are relative to `/Users/yueban/code/yuebanhome/3d-max` unless absolute. The [runtime process record](../.data/full-delivery/final-candidate-10/runtime-process.json) records PID 54913 at launch and the addresses; its PID is historical after a restart. The [08-to-09](../.data/full-delivery/final-candidate-09/candidate-source-comparison.json) and [09-to-10](../.data/full-delivery/final-candidate-10/candidate-source-comparison.json) comparisons list the exact verification-only changes.
 
-Candidate 04, 05 and 06 listeners have been stopped. Their frozen sources, data and evidence remain preserved; ports recorded inside historical reports describe those earlier runs, not currently available services.
+Candidate 04 through 09 listeners have been stopped. Candidate 07/08 process working directories and absence of active render jobs were checked before stopping PIDs 30615/48191; ports 4217/4317/4218/4318 are now closed. Their frozen sources, data and evidence remain preserved. The unrelated original film service was retained. Historical report ports describe earlier runs, not currently available delivery services.
 
 ## Start And Restart
 
@@ -21,14 +21,14 @@ Requires Node.js 24+, npm, FFmpeg/ffprobe on `PATH`, and installed Playwright Ch
 Run the preserved build with its existing data directory:
 
 ```sh
-cd /Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-07
-PORT=4217 \
-APP_URL=http://127.0.0.1:4217 \
-WHITEFRAME_DATA_DIR=/Users/yueban/code/yuebanhome/3d-max/.data/delivery-candidate-07 \
-WHITEFRAME_DIST_DIR=/Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-07/dist \
-WHITEFRAME_REVIEW_PORT=4317 \
+cd /Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-10
+PORT=4219 \
+APP_URL=http://127.0.0.1:4219 \
+WHITEFRAME_DATA_DIR=/Users/yueban/code/yuebanhome/3d-max/.data/delivery-candidate-10 \
+WHITEFRAME_DIST_DIR=/Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-10/dist \
+WHITEFRAME_REVIEW_PORT=4319 \
 WHITEFRAME_REVIEW_HOST=127.0.0.1 \
-WHITEFRAME_REVIEW_URL=http://127.0.0.1:4317 \
+WHITEFRAME_REVIEW_URL=http://127.0.0.1:4319 \
 WHITEFRAME_RHUBARB_PATH=/Users/yueban/code/yuebanhome/3d-max/.data/tools/rhubarb-native/build/rhubarb/rhubarb \
 npm start
 ```
@@ -36,12 +36,12 @@ npm start
 For a foreground instance, restart with `Ctrl+C`, wait for both listeners to close, then repeat the startup block. For an existing managed instance, first identify its current listener and working directory:
 
 ```sh
-WHITEFRAME_RUNTIME_PID="$(lsof -tiTCP:4217 -sTCP:LISTEN)"
+WHITEFRAME_RUNTIME_PID="$(lsof -tiTCP:4219 -sTCP:LISTEN)"
 ps -p "$WHITEFRAME_RUNTIME_PID" -o pid=,command=
 lsof -a -p "$WHITEFRAME_RUNTIME_PID" -d cwd
 ```
 
-After confirming that process belongs to this runtime, use `kill -TERM "$WHITEFRAME_RUNTIME_PID"`, wait for ports 4217 and 4317 to close, and repeat the startup block. A restart preserves saved data; unfinished exports become failed jobs that can be retried.
+After confirming that process belongs to this runtime, use `kill -TERM "$WHITEFRAME_RUNTIME_PID"`, wait for ports 4219 and 4319 to close, and repeat the startup block. A restart preserves saved data; unfinished exports become failed jobs that can be retried. Uploaded MCP chunks and completed import receipts survive restarts; browser workspace sessions reconnect with new IDs.
 
 ## MCP Connection
 
@@ -51,14 +51,14 @@ Open the editor's MCP dialog and copy the configuration and token from this loca
 {
   "mcpServers": {
     "whiteframe": {
-      "url": "http://127.0.0.1:4217/mcp",
+      "url": "http://127.0.0.1:4219/mcp",
       "headers": { "Authorization": "Bearer YOUR_LOCAL_TOKEN" }
     }
   }
 }
 ```
 
-Replace the placeholder with the token shown in the local UI; no actual token is stored in this document. The same dialog supplies the stdio bridge configuration, which requires the API to remain running. Review invitations use the separate 4317 service and their own scoped credentials. Exact editing tool names and entry points are in [acceptance-entrypoints.md](acceptance-entrypoints.md).
+Replace the placeholder with the token shown in the local UI; no actual token is stored in this document. The same dialog supplies the stdio bridge configuration, which requires the API to remain running. Review invitations use the separate 4319 service and their own scoped credentials. Exact editing tool names are in [acceptance-entrypoints.md](acceptance-entrypoints.md); live workspace controls, headless screenshots and large-file transfer examples are in [web-mcp-parity.md](web-mcp-parity.md).
 
 ## Four Films
 
@@ -66,12 +66,28 @@ Open a film project from the editor's project menu, then play its completed expo
 
 | Film               | Duration | Online Playback                                                                       | Download MP4                                                                            | Local Editable Package                                                                                         |
 | ------------------ | -------: | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Martial arts, r34  |     134s | [Play](http://127.0.0.1:4217/api/renders/2143a917-acc5-4fd2-8e0a-bf338d7c416d/stream) | [Download](http://127.0.0.1:4217/api/renders/2143a917-acc5-4fd2-8e0a-bf338d7c416d/file) | [martial/martial.whiteframe](../.data/full-delivery/final-candidate-05/productions/martial/martial.whiteframe) |
-| Racing, r41        |   122.5s | [Play](http://127.0.0.1:4217/api/renders/01b4ea92-0b82-4d37-9c13-c839be5583fb/stream) | [Download](http://127.0.0.1:4217/api/renders/01b4ea92-0b82-4d37-9c13-c839be5583fb/file) | [racing/racing.whiteframe](../.data/full-delivery/final-candidate-05/productions/racing/racing.whiteframe)     |
-| Space combat, r106 |     120s | [Play](http://127.0.0.1:4217/api/renders/b4cd9819-778b-475c-84cc-277fc6c6831d/stream) | [Download](http://127.0.0.1:4217/api/renders/b4cd9819-778b-475c-84cc-277fc6c6831d/file) | [space/space.whiteframe](../.data/full-delivery/final-candidate-05/productions/space/space.whiteframe)         |
-| Tourism, r72       |     128s | [Play](http://127.0.0.1:4217/api/renders/6b3b8927-e2ac-4286-936d-8190fab5d287/stream) | [Download](http://127.0.0.1:4217/api/renders/6b3b8927-e2ac-4286-936d-8190fab5d287/file) | [tourism/tourism.whiteframe](../.data/full-delivery/final-candidate-05/productions/tourism/tourism.whiteframe) |
+| Martial arts, r34  |     134s | [Play](http://127.0.0.1:4219/api/renders/2143a917-acc5-4fd2-8e0a-bf338d7c416d/stream) | [Download](http://127.0.0.1:4219/api/renders/2143a917-acc5-4fd2-8e0a-bf338d7c416d/file) | [martial/martial.whiteframe](../.data/full-delivery/final-candidate-05/productions/martial/martial.whiteframe) |
+| Racing, r41        |   122.5s | [Play](http://127.0.0.1:4219/api/renders/01b4ea92-0b82-4d37-9c13-c839be5583fb/stream) | [Download](http://127.0.0.1:4219/api/renders/01b4ea92-0b82-4d37-9c13-c839be5583fb/file) | [racing/racing.whiteframe](../.data/full-delivery/final-candidate-05/productions/racing/racing.whiteframe)     |
+| Space combat, r106 |     120s | [Play](http://127.0.0.1:4219/api/renders/b4cd9819-778b-475c-84cc-277fc6c6831d/stream) | [Download](http://127.0.0.1:4219/api/renders/b4cd9819-778b-475c-84cc-277fc6c6831d/file) | [space/space.whiteframe](../.data/full-delivery/final-candidate-05/productions/space/space.whiteframe)         |
+| Tourism, r72       |     128s | [Play](http://127.0.0.1:4219/api/renders/6b3b8927-e2ac-4286-936d-8190fab5d287/stream) | [Download](http://127.0.0.1:4219/api/renders/6b3b8927-e2ac-4286-936d-8190fab5d287/file) | [tourism/tourism.whiteframe](../.data/full-delivery/final-candidate-05/productions/tourism/tourism.whiteframe) |
 
-Package paths share the prefix `.data/full-delivery/final-candidate-05/productions/`; each directory also retains `<theme>.mp4`, `export-project.json`, `export-job.json` and `ffprobe.json`. Candidate 06/07 evidence directories contain new UI/MCP evidence, not another copy of those 20 accepted files. Current served files are `.data/delivery-candidate-07/renders/<job-id>.mp4`. Use the project window's package restore control to reopen an archive with its assets and history. The [copy provenance](../.data/full-delivery/final-candidate-05/accepted-copy-provenance.json) verifies that all 20 files match the accepted candidate 03 originals; it makes no later-candidate render or playback claim.
+Package paths share the prefix `.data/full-delivery/final-candidate-05/productions/`; each directory also retains `<theme>.mp4`, `export-project.json`, `export-job.json` and `ffprobe.json`. Current served files are `.data/delivery-candidate-10/renders/<job-id>.mp4`. Use the project window's package restore control or MCP chunk tools to reopen an archive with its assets and history. The [copy provenance](../.data/full-delivery/final-candidate-05/accepted-copy-provenance.json) verifies that all 20 accepted files match candidate 03 originals; it makes no later-candidate render or playback claim.
+
+All four actual packages now pass [MCP-only restoration and restart](../.data/full-delivery/final-candidate-09/mcp-package-checks-complete/suite-report.json): 335 chunks, 492 public tool calls, 257 original history snapshots and exact assets/videos. Four representative shots were re-exported at 720p24, totaling 42 seconds/1008 frames. Tourism and martial independently encoded interior shots exactly match verified same-shot candidate 07 baselines; racing and space exceed the original 0.999 full-film SSIM gate. Original full films and earlier failures/calibration evidence remain preserved.
+
+Candidate 08's [144 fresh frame comparisons](../.data/full-delivery/final-candidate-08/runtime-verification-summary.json) pass with minimum SSIM 0.994569 and unchanged accepted project snapshots/video hashes. Candidate 09's [eight actual UI checks](../.data/full-delivery/final-candidate-09/film-ui-checks/film-ui-report.json) and [24-screenshot review](../.data/full-delivery/final-candidate-09/film-ui-checks/manual-visual-review.json) pass, including four exact official PNGs, eight exact downloads and 24 seeks. These are fresh sampled/short-play checks, not a replacement attribution for candidate 03's original complete film reviews.
+
+Candidate 10's [final runtime check](../.data/full-delivery/final-candidate-10/bounded-runtime-checks/runtime-report.json) verifies all 326 frozen source files, eight served distribution files, four exact project snapshots and all four MP4 stream/download hashes. Actual desktop/mobile MCP workspace and video controls pass; [eight inspected images](../.data/full-delivery/final-candidate-10/bounded-runtime-checks/manual-visual-review.json) show nonblank scenes and contained controls. The main endpoint exposes 164 tools with definitions exactly matching candidate 09. This bounded check leaves the original accepted martial project r34 active. Short playback is 4.56734 seconds with six dropped display frames under concurrent verification load and no browser/player errors; it is not a new full-film review or performance benchmark.
+
+## Engineering Verification
+
+Current engineering acceptance is in [candidate 10 completion](../.data/full-delivery/final-candidate-10/checks-completion/verification-completed.json): format, 321 domain/service tests, strict types/build, 319 source files within the 1000-line limit, three corrected development video tests and all 19 unique production cases pass. The initial production run retains 18 successes and one missing-Rhubarb-environment failure; the separately configured catalog rerun passes. Candidate 08's broad browser invocation remains 81/83 with two SSE test-proxy teardown failures, completed by candidate 10's corrected video tests. These are explicitly combined coverage records, not claims of new clean full-suite invocations.
+
+The [current MCP audit](../.data/full-delivery/final-candidate-10/checks-completion/mcp-coverage-current.json) records successful standalone calls for all 165 distinct names across owner and invited-review catalogs; the owner endpoint itself has 164. The current run supplies all of this coverage without copying historical audit entries. Source/build hashes remain unchanged before and after verification.
+
+## Historical Evidence
+
+The records below preserve earlier runtime versions and their limitations. Their ports, test counts and commit receipts describe those historical runs; current delivery and source binding are listed above and in the current acceptance matrix.
 
 Candidate 07's [actual four-film UI check](../.data/full-delivery/final-candidate-07/ui-spot-check.json) is complete: all eight desktop/mobile groups and 24 actual timeline seeks pass with unchanged saved projects and photographed canvases, no browser errors and no failed groups. Four actual desktop downloads match accepted MP4 hashes, and four official time-zero previews match candidate 05's corresponding PNGs byte-for-byte with zero changed RGBA pixels. The [manual review](../.data/full-delivery/final-candidate-07/ui-visual-review.json) inspects 20 screenshots, including all eight actual players, and accepts the reviewed film workflows with no new visible defect. This is short playback evidence, not a full-film replay or isolated performance benchmark. Candidate 06's completed checks below retain their original source hash and are not relabeled as this new run.
 
@@ -81,7 +97,7 @@ Candidate 05's own frame comparisons are complete: [martial](../.data/full-deliv
 
 ## Data And Evidence
 
-**SQLite, model/audio/video assets, project packages, frozen builds and local tool binaries live under `.data` on this machine and are not in Git.** A Git clone alone does not contain these films or the running projects. For a full backup, stop the service and preserve the entire `.data/delivery-candidate-07` directory, or use the portable packages for project transfer. Keep the frozen build and required runtime dependencies with a deployment. See [project-packages.md](project-packages.md) for package limits and restoration.
+**SQLite, model/audio/video assets, project packages, frozen builds and local tool binaries live under `.data` on this machine and are not in Git.** A Git clone alone does not contain these films or the running projects. For a full backup, stop the service and preserve the entire `.data/delivery-candidate-10` directory, or use the portable packages for project transfer. Keep the frozen build and required runtime dependencies with a deployment. See [project-packages.md](project-packages.md) for package limits and restoration.
 
 Candidate 07's [scoped verification](../.data/full-delivery/final-candidate-07/checks/verification.json) is complete: format, 301 domain/service tests, strict TypeScript/build, 291 source files at no more than 1000 lines each, one development ruler browser check and one production ruler browser check passed, with no skipped or flaky browser tests. Its [06-to-07 source comparison](../.data/full-delivery/final-candidate-07/candidate-source-comparison.json) identifies exactly two changed files, `TimelineRuler.tsx` and its mathematical test. The correction supplies a finite minimum step for extremely short durations, including `Number.MIN_VALUE`; the [20-case comparison](../.data/timeline-ruler-fixed/submillisecond-regular-state-comparison.json) records identical normal-duration tick results using the same recorded/fallback measurements. Engine, shared domain, server, dependencies and render entry remain unchanged. This scoped run does not claim to repeat candidate 05's broader browser/MCP suite.
 
@@ -100,9 +116,9 @@ Candidate 05 corrects the earlier 160m-object focus defect with bounds-based per
 For a new complete engineering run, use a new, nonexistent evidence directory and pass the native analyzer to the test runner as well as the application:
 
 ```sh
-cd /Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-07
+cd /Users/yueban/code/yuebanhome/3d-max/.data/releases/full-candidate-10
 WHITEFRAME_RHUBARB_PATH=/Users/yueban/code/yuebanhome/3d-max/.data/tools/rhubarb-native/build/rhubarb/rhubarb \
-node scripts/verify-release.mjs /Users/yueban/code/yuebanhome/3d-max/.data/full-delivery/final-candidate-07/checks-recheck
+node scripts/verify-release.mjs /Users/yueban/code/yuebanhome/3d-max/.data/full-delivery/final-candidate-10/checks-recheck
 ```
 
 This command runs format, domain/service tests, strict TypeScript/build/structure, real render smoke, browser and production suites, and the successful standalone MCP-call coverage gate. It does not replace film review or overall requirement acceptance.
@@ -122,4 +138,4 @@ These are observed end-to-end times, including browser automation and UI work, w
 
 Candidate 05's visual review found overlapping per-second timeline labels in the actual long films. Candidate 06's adaptive spacing and in-bounds terminal label resolve that defect in all four reviewed films. Its visual report leaves final release acceptance false because of the separately discovered `Number.MIN_VALUE` step underflow. Candidate 07 corrects that boundary and passes its scoped checks, actual four-film checks and manual screenshot review. The historical reports retain their original decisions. The earlier performance benchmark did not exercise that boundary or large-object focus and has not been rerun under candidate 07.
 
-The implemented corrections have completed verified source delivery. H07/H08 remain unresolved in the [historical scope audit](historical-scope-audit.md), and E08 overall acceptance remains open; no exclusion or overall completion is implied by the code commit. The authoritative status remains [full-delivery-matrix.md](full-delivery-matrix.md).
+These historical corrections and reports retain their original acceptance boundaries. H07/H08 are resolved in [scope-decisions.md](scope-decisions.md); current Web/MCP behavior, four-package recovery and runtime checks are recorded above. Overall acceptance and Git delivery are governed by [full-delivery-matrix.md](full-delivery-matrix.md).

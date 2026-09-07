@@ -72,7 +72,12 @@ export function capturePackageState(store: Store, projectId: string, includeHist
   }
 }
 
-export function installPackageState(store: Store, state: PackageState, assets: PackageAssetCandidate[]) {
+export function installPackageState(
+  store: Store,
+  state: PackageState,
+  assets: PackageAssetCandidate[],
+  onCommit?: (project: Project) => void,
+) {
   const project = validateProject(state.project);
   const unusedAssetPaths: string[] = [];
   store.db.exec('BEGIN IMMEDIATE');
@@ -121,6 +126,7 @@ export function installPackageState(store: Store, state: PackageState, assets: P
         "INSERT INTO meta(key,value) VALUES('active_project',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
       )
       .run(project.id);
+    onCommit?.(project);
     store.db.exec('COMMIT');
   } catch (error) {
     store.db.exec('ROLLBACK');

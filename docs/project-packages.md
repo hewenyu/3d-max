@@ -19,7 +19,7 @@ The final write transaction rechecks each existing asset's SHA-256 and MIME type
 - Individual version 2 JSON record: 256 MiB, including Base64 expansion and snapshot metadata.
 - Records of each history, asset, or job type: at most 10,000.
 - Legacy version 1 document: 512 MiB expanded, subject to the JavaScript string limit.
-- The MCP Base64 import remains subject to the JSON request size limit; larger packages use the official multipart endpoint `/api/packages/import`.
+- The single-request `project_package_import` has a 32 MiB encoded JSON input limit. The public MCP `transfer_begin/chunk/status/commit/cancel` tools support the full 512 MiB compressed limit with resumable uploads, SHA-256 validation and atomic import receipts. Web multipart `/api/packages/import` remains available. See [transfer protocol](web-mcp-parity.md#chunked-transfers).
 
 These limits are validated explicitly. A package exceeding a limit fails with a structured error instead of silently dropping history or video.
 
@@ -30,3 +30,7 @@ These limits are validated explicitly. A package exceeding a limit fails with a 
 `tests/package-concurrency.test.ts` uses two independent SQLite connections and concurrent imports to verify matching-asset reuse, same-ID/different-content rejection, exclusive-asset rollback, and absence of orphan files.
 
 Production evidence lives in `.data/full-delivery/productions/<theme>/package-{export,restoration,restart}-report.json`. The final racing and space packages were restored into separate clean databases, edited through MCP, undone back to exact PNG hashes, and re-exported as single shots for comparison with the accepted film intervals. Space revision 106 includes all 107 history snapshots and both original videos.
+
+Those historical large-package uploads used HTTP multipart. The new [candidate 09 MCP-only suite](../.data/full-delivery/final-candidate-09/mcp-package-checks-complete/suite-report.json) passes with all four actual packages, including the 256,528,195-byte space package. `scripts/production/verify-mcp-package-suite.ts` records 335 chunks and 492 public tool calls with zero errors, verifies all 257 original ordered history snapshots and referenced assets/videos, edits and undoes through MCP, and re-exports four representative shots totaling 42 seconds/1008 frames. An actual process restart preserves projects, history, assets, video hashes and idempotent import receipts.
+
+Two interior-shot re-exports differ from the original full-film encoding by more than the verifier's initial 0.001 SSIM allowance. Independently rendered, source-verified candidate 07 baselines produce byte-identical videos and identical decoded frames for those shots. The verifier retains the original SSIM gate and accepts this separately verified exact-baseline case with a 0.98 full-film similarity floor. Both initial failures and the positive/negative calibration results remain preserved. This verifies restored shot rendering; it does not claim four new full-film exports. Candidate 10 has identical application and verification-script bytes to 09, as recorded in the [source comparison](../.data/full-delivery/final-candidate-10/candidate-source-comparison.json).
