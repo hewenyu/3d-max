@@ -164,7 +164,7 @@ export default function App() {
         event.preventDefault();
         saveProject();
       }
-      if (event.key.toLowerCase() === 'f') engine.current?.focus(selected[0]);
+      if (event.key.toLowerCase() === 'f') engine.current?.focus();
       if (event.key === 'Escape') {
         setSelected([]);
         setMobilePanel(null);
@@ -339,7 +339,7 @@ export default function App() {
           />
           <span className="tool-divider" />
           <IconButton icon={Magnet} label="网格吸附" active={snap} onClick={() => setSnap(!snap)} />
-          <IconButton icon={Focus} label="聚焦选中对象" onClick={() => engine.current?.focus(selected[0])} />
+          <IconButton icon={Focus} label="聚焦选中对象" onClick={() => engine.current?.focus()} />
         </div>
         <div className="view-modes segmented">
           {(
@@ -413,7 +413,7 @@ export default function App() {
               { label: '旋转', icon: Rotate3D, active: tool === 'rotate', run: () => setTool('rotate') },
               { label: '缩放', icon: Scaling, active: tool === 'scale', run: () => setTool('scale') },
               { label: '网格吸附', icon: Magnet, active: snap, run: () => setSnap(!snap) },
-              { label: '聚焦选中对象', icon: Focus, run: () => engine.current?.focus(selected[0]) },
+              { label: '聚焦选中对象', icon: Focus, run: () => engine.current?.focus() },
               {
                 label: '连续性审查',
                 icon: ClipboardCheck,

@@ -156,6 +156,7 @@
   overflow: hidden;
   user-select: none;
   touch-action: none;
+  font-size: 9px;
 }
 .timeline-ruler > span {
   position: absolute;
@@ -165,6 +166,15 @@
   height: 20px;
   color: #8f9f9a;
   font-size: 9px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.timeline-ruler > .ruler-end {
+  transform: translateX(-100%);
+  padding-left: 0;
+  padding-right: 6px;
+  border-left: 0;
+  border-right: 1px solid #586764;
 }
 .shot-track {
   display: flex;

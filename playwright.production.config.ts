@@ -9,6 +9,8 @@ export default defineConfig({
   ...base,
   testMatch: [
     '**/camera-view.spec.ts',
+    '**/observation-focus.spec.ts',
+    '**/timeline-ruler.spec.ts',
     '**/review.spec.ts',
     '**/video-playback.spec.ts',
     '**/export-context.spec.ts',

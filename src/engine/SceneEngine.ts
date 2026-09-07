@@ -7,6 +7,7 @@ import type { BuiltObject } from './ObjectFactory';
 import type { ActorConstraintResult } from '../../shared/actor-animation';
 import { applyActorConstraints } from './ActorConstraints';
 import { CameraOpticsRenderer } from './CameraOpticsRenderer';
+import { fitPerspectiveObservation, fitTopObservation } from './ObservationFraming';
 import { sceneFarPlane } from '../../shared/scene-framing';
 import { resolveLighting } from '../../shared/lighting-plans';
 import { sampleSequenceOpacity, sampleSequenceTransition } from '../../shared/transitions';
@@ -44,7 +45,8 @@ export class SceneEngine {
   private transitionRenderer: TransitionRenderer | null = null;
   private drawing = false;
   private readonly topCamera = new THREE.OrthographicCamera(-6, 6, 6, -6, 0.05, 300);
-  private readonly orbit: OrbitControls;
+  private readonly editorOrbit: OrbitControls;
+  private readonly topOrbit: OrbitControls;
   private readonly transform: TransformControls;
   private readonly keyLight: THREE.DirectionalLight;
   private readonly ambient: THREE.HemisphereLight;
@@ -69,6 +71,8 @@ export class SceneEngine {
   private width = 1;
   private height = 1;
   private editorFramingScale = 1;
+  private editorFocusBounds: THREE.Box3 | null = null;
+  private topFocusBounds: THREE.Box3 | null = null;
   private generation = 0;
   private destroyed = false;
   private dragging = false;
@@ -112,7 +116,12 @@ export class SceneEngine {
     this.topCamera.position.set(0, 20, 0);
     this.topCamera.up.set(0, 0, -1);
     this.topCamera.lookAt(0, 0, 0);
-    this.orbit = new OrbitControls(this.editorCamera, this.canvas);
+    this.editorOrbit = new OrbitControls(this.editorCamera, this.canvas);
+    this.topOrbit = new OrbitControls(this.topCamera, this.canvas);
+    this.topOrbit.enableRotate = false;
+    this.topOrbit.enableDamping = true;
+    this.topOrbit.dampingFactor = 0.09;
+    this.topOrbit.enabled = false;
     this.orbit.target.set(0, 0.65, 0);
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.09;
@@ -191,6 +200,8 @@ export class SceneEngine {
       this.canvas.addEventListener('pointerup', this.onPointerUp);
       this.canvas.addEventListener('dblclick', this.onDoubleClick);
     }
+    this.editorOrbit.addEventListener('change', () => this.draw());
+    this.topOrbit.addEventListener('change', () => this.draw());
     this.resize();
     if (options.interactive !== false) this.animate();
     else this.draw();
@@ -375,9 +386,9 @@ export class SceneEngine {
   }
 
   setView(mode: ViewMode) {
+    if (mode !== this.mode) this.settleObservationControls();
+    this.orbit.enabled = false;
     this.mode = mode;
-    this.orbit.object = mode === 'top' ? this.topCamera : this.editorCamera;
-    this.orbit.enableRotate = mode !== 'top';
     this.orbit.enabled = mode !== 'camera' && this.options.interactive !== false;
     this.transform.camera = this.activeCamera;
     this.updateHelperVisibility();
@@ -429,39 +440,80 @@ export class SceneEngine {
   }
 
   focus(id?: string) {
-    const target = id
-      ? this.objects.get(id)?.root
-      : this.selected[0]
-        ? this.objects.get(this.selected[0])?.root
-        : null;
-    const bounds = target
-      ? new THREE.Box3().setFromObject(target)
-      : new THREE.Box3(new THREE.Vector3(-3, 0, -2.5), new THREE.Vector3(3, 2, 2.5));
-    if (bounds.isEmpty()) return;
-    const center = bounds.getCenter(new THREE.Vector3());
-    const size = Math.max(0.7, bounds.getSize(new THREE.Vector3()).length());
-    const direction = this.editorCamera.position.clone().sub(this.orbit.target).normalize();
-    this.editorCamera.position.copy(center).addScaledVector(direction, size * 1.55);
-    this.orbit.target.copy(center);
-    if (this.mode === 'top') {
-      this.topCamera.position.set(center.x, 20, center.z);
-      this.topCamera.zoom = Math.min(6, Math.max(0.4, 9 / size));
-      this.topCamera.updateProjectionMatrix();
+    const ids = id ? [id] : this.selected;
+    const bounds = new THREE.Box3();
+    if (ids.length) {
+      for (const objectId of ids) {
+        const root = this.objects.get(objectId)?.root;
+        if (!root) continue;
+        root.updateWorldMatrix(true, true);
+        bounds.expandByObject(root);
+      }
+    } else {
+      this.objectGroup.updateWorldMatrix(true, true);
+      bounds.setFromObject(this.objectGroup);
+      if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-3, 0, -2.5), new THREE.Vector3(3, 2, 2.5));
     }
+    if (bounds.isEmpty()) return;
+    this.settleObservationControls();
+    if (this.mode === 'top') {
+      const fit = fitTopObservation(bounds, this.topCamera);
+      this.topCamera.position.copy(fit.position);
+      this.topCamera.zoom = fit.zoom;
+      this.topOrbit.target.copy(fit.center);
+      this.topFocusBounds = bounds;
+      this.topCamera.updateProjectionMatrix();
+    } else {
+      const fit = fitPerspectiveObservation(bounds, this.editorCamera, this.editorOrbit.target);
+      this.editorCamera.position.copy(fit.position);
+      this.editorOrbit.target.copy(fit.center);
+      this.editorFocusBounds = bounds;
+    }
+    this.updateObservationLimits();
     this.orbit.update();
     this.draw();
   }
 
+  private get orbit() {
+    return this.mode === 'top' ? this.topOrbit : this.editorOrbit;
+  }
+
+  private settleObservationControls() {
+    const damping = this.orbit.enableDamping;
+    this.orbit.enableDamping = false;
+    this.orbit.update();
+    this.orbit.enableDamping = damping;
+  }
+
+  private updateObservationLimits() {
+    this.editorOrbit.maxDistance = Math.max(
+      65,
+      this.editorCamera.position.distanceTo(this.editorOrbit.target) * 4,
+    );
+    this.topOrbit.maxDistance = Math.max(65, this.topCamera.position.distanceTo(this.topOrbit.target) * 4);
+  }
+
   resize(width?: number, height?: number) {
+    const previousFit = this.editorFocusBounds
+      ? fitPerspectiveObservation(this.editorFocusBounds, this.editorCamera, this.editorOrbit.target).distance
+      : null;
+    const previousTopFit = this.topFocusBounds
+      ? fitTopObservation(this.topFocusBounds, this.topCamera).zoom
+      : null;
     this.width = Math.max(1, Math.round(width ?? this.container.clientWidth));
     this.height = Math.max(1, Math.round(height ?? this.container.clientHeight));
     this.renderer.setSize(this.width, this.height, false);
     this.editorCamera.aspect = this.width / this.height;
     const framingScale = Math.max(1, 1.2 / this.editorCamera.aspect);
+    const scale =
+      this.editorFocusBounds && previousFit
+        ? fitPerspectiveObservation(this.editorFocusBounds, this.editorCamera, this.editorOrbit.target)
+            .distance / previousFit
+        : framingScale / this.editorFramingScale;
     this.editorCamera.position
-      .sub(this.orbit.target)
-      .multiplyScalar(framingScale / this.editorFramingScale)
-      .add(this.orbit.target);
+      .sub(this.editorOrbit.target)
+      .multiplyScalar(scale)
+      .add(this.editorOrbit.target);
     this.editorFramingScale = framingScale;
     this.editorCamera.updateProjectionMatrix();
     const topWidth = 6 * Math.max(1, this.width / this.height);
@@ -470,7 +522,10 @@ export class SceneEngine {
     this.topCamera.right = topWidth;
     this.topCamera.top = topHeight;
     this.topCamera.bottom = -topHeight;
+    if (this.topFocusBounds && previousTopFit)
+      this.topCamera.zoom *= fitTopObservation(this.topFocusBounds, this.topCamera).zoom / previousTopFit;
     this.topCamera.updateProjectionMatrix();
+    this.updateObservationLimits();
     this.updateSafeFrame();
     this.draw();
   }
@@ -483,7 +538,7 @@ export class SceneEngine {
   getEditorCamera(): { position: Vec3; target: Vec3; fov: number } {
     return {
       position: this.editorCamera.position.toArray() as Vec3,
-      target: this.orbit.target.toArray() as Vec3,
+      target: this.editorOrbit.target.toArray() as Vec3,
       fov: this.editorCamera.fov,
     };
   }
@@ -759,7 +814,7 @@ export class SceneEngine {
   private animate = () => {
     if (this.destroyed) return;
     this.animationFrame = requestAnimationFrame(this.animate);
-    if (this.orbit.enabled && this.orbit.update()) this.draw();
+    if (this.orbit.enabled) this.orbit.update();
   };
 
   private draw() {
@@ -864,7 +919,8 @@ export class SceneEngine {
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('dblclick', this.onDoubleClick);
-    this.orbit.dispose();
+    this.editorOrbit.dispose();
+    this.topOrbit.dispose();
     this.transform.dispose();
     this.opticsRenderer?.dispose();
     this.transitionRenderer?.dispose();

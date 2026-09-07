@@ -27,6 +27,7 @@ import { IconButton, NumberInput, timecode } from './Controls';
 import { ShotThumbnail } from './Stage';
 import { RetimingPanel } from './RetimingPanel';
 import { TransitionPanel } from './TransitionPanel';
+import { TimelineRuler } from './TimelineRuler';
 import { cameraToClipTime, clipDuration, sampleClipTime, sourceToClipTime } from '../../shared/time-map';
 import { resolveShotProject } from '../../shared/production';
 
@@ -218,22 +219,7 @@ export function Timeline({
             {hasEvents && <div className="track-label">运动事件</div>}
           </div>
           <div className="tracks">
-            <div
-              className="timeline-ruler"
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                scrub(e);
-              }}
-              onPointerMove={(e) => {
-                if (e.buttons === 1) scrub(e);
-              }}
-            >
-              {Array.from({ length: Math.ceil(playback.duration) + 1 }, (_, index) => (
-                <span key={index} style={{ left: `${(index / (playback.duration || 1)) * 100}%` }}>
-                  {index}s
-                </span>
-              ))}
-            </div>
+            <TimelineRuler duration={playback.duration} onScrub={scrub} />
             <div className="shot-track">
               {placements.map(
                 ({ clip, start, shot }, index) =>
