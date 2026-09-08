@@ -47,4 +47,4 @@ Node.js 24、FFmpeg/ffprobe、Playwright Chromium 为本机依赖。固定版本
 
 旧四片实例 <http://127.0.0.1:4219> 及原文件未改动。[兼容报告](advanced-modeling-compatibility.md) 包含四个旧工程和历史恢复、实际重启、四代表镜头 42 秒/1008 帧重导出、桌面/手机 8 项播放验证和原文件哈希对照。
 
-二进制作品和运行数据保存在本机 `.data`，不进入 Git；源代码、制作与复验脚本、文档及许可证进入版本库。最终代码版本以本次交付提交为准；目标仅在矩阵、作品恢复和工程门禁全部关闭后标记完成。
+二进制作品和运行数据保存在本机 `.data`，不进入 Git；源代码、制作与复验脚本、文档及许可证已提交为 `a9464d1` 并推送至 `origin/master`。本次文档收尾提交记录全部验收关闭。四作品独立视觉报告为 `restoration-final/manual-visual-review.json`，真实孔洞射线检查为 `independent-glb-hole-review.json`；机械最终目录另有正式 MCP 捕获的 `hydraulic-detail.png` 补足套筒近景。

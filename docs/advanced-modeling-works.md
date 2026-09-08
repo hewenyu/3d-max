@@ -160,3 +160,5 @@ r21 的旧运行版本产物为 14,384 个三角形、648,564 字节 GLB，以�
 集中编辑器为 <http://127.0.0.1:4224>，四个工程 ID 和下载目录见 [交付入口](advanced-modeling-delivery.md)。四个项目包均实际恢复至全新 SQLite，保留 18、22、14、13 条源历史。服务真实重启后，每件均完成项目内容、历史、依赖、原视频、GLB 和 PNG 对照，修改对象、撤销/重做/撤销及再次正式 MP4 导出与完整播放。
 
 `.data/advanced-modeling/restoration-final/suite-report.json` 为四件全部通过的总记录，实际 PID 为 6289→7029。四个再次生成的 GLB、PNG 和完整 MP4 都与最终原产物字节一致，视频独立对照在 `video-hashes.json`。作品源均由产品通用几何能力创建，没有引用成品模型资产；模板/导入资产源保留另由集成测试验证。
+
+独立视觉复核 `manual-visual-review.json` 检查了四份联系表和八张恢复后的桌面/手机播放器图。机械主片的桥接套筒内孔像素较小，最终目录补充 `hydraulic-detail.png`：正式 `scene_view_capture` 近景清楚显示环口厚度、内壁、外壁和支柱连接，调用参数与活跃工程精确恢复记录同存。`independent-glb-hole-review.json` 用实际 GLB 射线验证套筒和壶体/壶嘴通道畅通、环壁真实存在；壶检查件最低点约 4.29e-8 米，已落地。壶嘴接缝保留轻微平滑着色折痕，不影响真实孔洞结构。

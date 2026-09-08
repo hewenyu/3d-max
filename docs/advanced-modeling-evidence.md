@@ -46,4 +46,6 @@
 
 完整独立三档报告为 `.data/advanced-modeling/performance/node-server/2026-09-08T06-07-11-195Z-219e707f`。40000 顶点实际点选约 241ms、关联选择 302ms、首次组件准备 1027ms；首次准备与结果发布仍有长任务，报告列出最大值。90,000 顶点、45,000 连通四边面的近上限实测记录在 `performance-near-limit/`：可创建、检查、拾取、保存和生成 PNG，变换达到既定 512 MiB Worker 堆限制，失败原子保留源和版本。该结果标记 `completed-with-limit`，不宣称 90,000 顶点变换成功，也不以 100,000 顶点 schema 上限承诺每个操作的可用复杂度。
 
-四件作品操作/检查/GLB 的耗时从正式日志提取，见 `.data/advanced-modeling/performance/works-performance.json`。全部实际边界、机器条件、失败原件及许可证见 [性能报告](advanced-modeling-performance.md) 和 [工程约定](advanced-modeling-engineering.md)。代码提交与推送是最后的交付门禁，目标状态只在所有适用验收关闭后更新。
+四件作品操作/检查/GLB 的耗时从正式日志提取，见 `.data/advanced-modeling/performance/works-performance.json`。全部实际边界、机器条件、失败原件及许可证见 [性能报告](advanced-modeling-performance.md) 和 [工程约定](advanced-modeling-engineering.md)。实现提交 `a9464d1` 已推送至 `origin/master`；所有适用功能、四作品、兼容与工程门禁均已关闭。
+
+独立人工复核位于 `.data/advanced-modeling/restoration-final/manual-visual-review.json`，四份联系表及八张恢复后桌面/手机播放器截图通过。`independent-glb-hole-review.json` 用实际导出 GLB 验证出水通道和桥接套筒孔洞；机械 `hydraulic-detail.png` 由公开 MCP 真实近景补足主片中较小的内孔。壶嘴接缝有轻微平滑着色折痕，实际通道完整，此视觉边界保留在报告中。

@@ -94,7 +94,7 @@
 | ENG-03 | 统一格式、严格 TypeScript、边界校验和结构化错误；成熟几何库许可与数值行为核查，自定义算法说明数据约定 | 格式/严格TypeScript通过；[依赖许可与数值边界](advanced-modeling-engineering.md)、实际WASM LICENSE/NOTICE随构建发布，斜平面/近共面/布尔邻桶和退化输入回归 | 通过 |
 | ENG-04 | 几何/拓扑/迁移/SQLite/Web/MCP/撤销恢复/导出按风险验证 | [501项完整回归及补充行为检查](advanced-modeling-evidence.md)、真实MCP/HTTP/SQLite/Worker/恢复/正式GLB和视频证据；失败原件保留 | 通过 |
 | ENG-05 | 桌面/手机真实浏览器检查布局、非空 3D 像素、组件选中反馈、人工/MCP 双向操作、实际图像/模型/视频 | [最终生产UI审查](advanced-modeling-ui-review.md)、真实增减选/吸附补充、四作品与旧四片desktop/mobile在线播放/图像/下载/像素检查，恢复后再次导出视频字节相同 | 通过 |
-| ENG-06 | 所有适用行和四作品、兼容回归均通过后，交付运行地址、MCP 文档、作品入口、报告和代码版本，commit 并推送 | 运行4224、MCP文档、四作品与所有验证已齐；等待本次源码提交及远端推送记录 | 待提交 |
+| ENG-06 | 所有适用行和四作品、兼容回归均通过后，交付运行地址、MCP 文档、作品入口、报告和代码版本，commit 并推送 | [交付入口](advanced-modeling-delivery.md)、[MCP文档](advanced-modeling-mcp.md)、[完整证据](advanced-modeling-evidence.md)；实现提交 a9464d1 已推送 origin/master，全部适用行通过 | 通过 |
 
 ## 数值与复杂度记录
 
