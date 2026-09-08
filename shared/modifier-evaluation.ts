@@ -1,8 +1,13 @@
 import { LoopSubdivision } from 'three-subdivide';
 import type { MeshModifier } from './modifier-schema';
 import { ModelingError, meshDataSchema, type MeshData } from './modeling';
-import { geometryToMesh, meshToGeometry } from './modeling-geometry';
+import { geometryToMesh, meshToGeometry } from './mesh-geometry';
 import type { Vec3 } from './types';
+import { evaluateAdvancedModifier } from './modifiers/evaluate';
+import { weldMirroredMesh } from './modifiers/weld';
+import { meshBoolean } from './modifiers/boolean';
+import type { ModifierEvaluationContext } from './modifiers/context';
+import { bevelMesh } from './topology/bevel';
 
 function capacity(mesh: MeshData, multiplier: number) {
   const triangles = mesh.faces.reduce((sum, face) => sum + face.length - 2, 0);
@@ -13,10 +18,42 @@ function capacity(mesh: MeshData, multiplier: number) {
     );
 }
 
-export function evaluateModifiers(source: MeshData, modifiers: MeshModifier[]): MeshData {
+export function evaluateModifiers(
+  source: MeshData,
+  modifiers: MeshModifier[],
+  context?: ModifierEvaluationContext,
+): MeshData {
   let mesh = structuredClone(source);
   for (const modifier of modifiers) {
     if (!modifier.enabled) continue;
+    if (modifier.type === 'boolean') {
+      if (!context)
+        throw new ModelingError(
+          'Referenced Boolean evaluation requires the project dependency context',
+          'MODIFIER_CONTEXT_REQUIRED',
+        );
+      if (modifier.operandId === context.objectId)
+        throw new ModelingError('Choose a different Boolean operand', 'MODIFIER_DEPENDENCY_CYCLE');
+      const operand = context.resolveOperand(modifier.operandId);
+      mesh = {
+        ...meshBoolean(mesh, operand.mesh, operand.operandToTarget, modifier.operation),
+        smooth: mesh.smooth,
+      };
+      continue;
+    }
+    if (modifier.type === 'bevel') {
+      const result = bevelMesh(mesh, {
+        width: modifier.width,
+        segments: modifier.segments,
+        shape: modifier.shape,
+      });
+      mesh = meshDataSchema.parse(result.mesh);
+      continue;
+    }
+    if (modifier.type !== 'subdivision' && modifier.type !== 'array' && modifier.type !== 'mirror') {
+      mesh = meshDataSchema.parse(evaluateAdvancedModifier(mesh, modifier));
+      continue;
+    }
     if (modifier.type === 'subdivision') {
       capacity(mesh, 4 ** modifier.iterations);
       const geometry = meshToGeometry(mesh);
@@ -67,6 +104,7 @@ export function evaluateModifiers(source: MeshData, modifiers: MeshModifier[]): 
         vertices: modifier.keepOriginal ? [...mesh.vertices, ...vertices] : vertices,
         faces: modifier.keepOriginal ? [...mesh.faces, ...faces] : faces,
       };
+      if (modifier.weldThreshold) mesh = weldMirroredMesh(mesh, modifier.weldThreshold);
     }
     mesh = meshDataSchema.parse(mesh);
   }

@@ -3,6 +3,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import type { Project, SceneObject, TimelineSample, Vec3 } from '../../shared/types';
 import { sampleCamera, sampleObject, sampleTimeline } from '../../shared/timeline';
+import { rebuildCameraHelpers, updateCameraHelpers } from './CameraHelpers';
+import { ComponentController } from './ComponentController';
+import { DirectorHelpers } from './DirectorHelpers';
+import type { ComponentTransformInput } from '../../shared/topology-schema';
 import type { BuiltObject } from './ObjectFactory';
 import type { ActorConstraintResult } from '../../shared/actor-animation';
 import { applyActorConstraints } from './ActorConstraints';
@@ -32,6 +36,8 @@ interface EngineOptions {
   interactive?: boolean;
   onSelect?: (id: string | null, additive?: boolean) => void;
   onTransform?: (id: string, patch: { position: Vec3; rotation: Vec3; scale: Vec3 }) => void;
+  onComponentTransform?: (input: ComponentTransformInput) => void;
+  onError?: (error: Error) => void;
 }
 
 function aspectRatio(project: Project | null) {
@@ -40,6 +46,7 @@ function aspectRatio(project: Project | null) {
 
 export class SceneEngine {
   readonly canvas: HTMLCanvasElement;
+  readonly components: ComponentController;
   ready: Promise<void> = Promise.resolve();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -88,8 +95,7 @@ export class SceneEngine {
   private time = 0;
   private timeOptions: TimeOptions = {};
   private animationFrame = 0;
-  private axisLine: THREE.Line | null = null;
-  private lookLines = new THREE.Group();
+  private directorHelpers = new DirectorHelpers();
   private lastSample: TimelineSample | null = null;
   private constraintResults = new Map<string, ActorConstraintResult[]>();
 
@@ -117,7 +123,7 @@ export class SceneEngine {
     this.container.append(this.canvas);
     this.scene.background = new THREE.Color('#cfd6d3');
     this.scene.add(this.objectGroup, this.helpers);
-    this.helpers.add(this.cameraHelpers, this.selectionHelpers, this.lookLines);
+    this.helpers.add(this.cameraHelpers, this.selectionHelpers, this.directorHelpers.root);
     this.editorCamera.position.set(7.8, 6.4, 9.5);
     this.shotCamera.position.set(0, 2.1, 6.6);
     this.shotCamera.lookAt(0, 1.05, 0);
@@ -143,10 +149,12 @@ export class SceneEngine {
     this.scene.add(this.transform.getHelper());
     this.transform.addEventListener('dragging-changed', (event) => {
       this.dragging = Boolean(event.value);
+      if (this.dragging) this.components.beginTransform();
       this.orbit.enabled = !this.dragging && this.mode !== 'camera' && this.options.interactive !== false;
       if (!this.dragging) this.emitTransform();
     });
     this.transform.addEventListener('objectChange', () => {
+      this.components?.previewTransform();
       this.refreshSelection();
       this.draw();
     });
@@ -199,6 +207,30 @@ export class SceneEngine {
     }
     this.editorOrbit.addEventListener('change', () => this.draw());
     this.topOrbit.addEventListener('change', () => this.draw());
+    this.components = new ComponentController({
+      scene: this.scene,
+      canvas: this.canvas,
+      view: () => ({
+        camera: this.activeCamera,
+        frame: this.getFrameRect(),
+        occluders: [...this.objectGroup.children],
+      }),
+      project: () => this.project,
+      root: (id) => this.objects.get(id)?.root,
+      editable: () => this.canEditBinding,
+      active: () => this.mode !== 'camera' && this.options.interactive !== false,
+      changed: () => {
+        this.syncTransformTarget();
+        this.updateHelperVisibility();
+        this.draw();
+      },
+      orbit: (enabled) => {
+        this.orbit.enabled = enabled && this.mode !== 'camera' && this.options.interactive !== false;
+      },
+      commit: (input) => this.options.onComponentTransform?.(input),
+      cancelTransform: () => this.cancelTransform(),
+      error: (error) => this.options.onError?.(error),
+    });
     this.resize();
     if (options.interactive !== false) this.animate();
     else this.draw();
@@ -395,6 +427,7 @@ export class SceneEngine {
 
   setSelection(ids: string[]) {
     this.selected = [...ids];
+    this.components.sync(ids);
     this.syncTransformTarget();
     this.refreshSelection();
     this.updateHelperVisibility();
@@ -409,6 +442,8 @@ export class SceneEngine {
         target = this.objects.get(object.id)?.root;
       }
     }
+    if (this.components.active) target = this.components.transformTarget;
+    this.transform.setSpace(this.components.active ? 'local' : 'world');
     if (this.transform.object !== target) {
       this.transform.detach();
       if (target) this.transform.attach(target);
@@ -417,6 +452,15 @@ export class SceneEngine {
 
   setTransformMode(mode: 'translate' | 'rotate' | 'scale') {
     this.transform.setMode(mode);
+  }
+
+  cancelTransform() {
+    if (!this.dragging) return false;
+    this.transform.reset();
+    this.components.cancelTransform();
+    this.transform.dragging = false;
+    this.draw();
+    return true;
   }
 
   setSnap(enabled: boolean) {
@@ -679,110 +723,15 @@ export class SceneEngine {
 
   private rebuildCameraHelpers() {
     this.clearHelpers(this.cameraHelpers);
-    if (!this.project) return;
-    for (const source of this.project.cameras) {
-      const sampled = sampleCamera(source, 0, this.project.settings.aspect);
-      const camera = new THREE.PerspectiveCamera(sampled.fov, aspectRatio(this.project), 0.12, 0.65);
-      camera.position.fromArray(sampled.position);
-      camera.lookAt(new THREE.Vector3(...sampled.target));
-      camera.updateMatrixWorld(true);
-      const helper = new THREE.CameraHelper(camera);
-      helper.setColors(
-        new THREE.Color('#587f79'),
-        new THREE.Color('#587f79'),
-        new THREE.Color('#587f79'),
-        new THREE.Color('#88a69e'),
-        new THREE.Color('#88a69e'),
-      );
-      helper.userData.entityId = source.id;
-      this.cameraHelpers.add(helper);
-      const handle = new THREE.Mesh(
-        new THREE.BoxGeometry(0.15, 0.11, 0.18),
-        new THREE.MeshBasicMaterial({ color: '#587f79' }),
-      );
-      handle.position.copy(camera.position);
-      handle.quaternion.copy(camera.quaternion);
-      handle.userData.entityId = source.id;
-      this.cameraHelpers.add(handle);
-    }
+    if (this.project) rebuildCameraHelpers(this.cameraHelpers, this.project);
   }
 
   private updateCameraHelpers(sourceTime: number) {
-    for (const source of this.project?.cameras || []) {
-      const sampled = sampleCamera(source, sourceTime, this.project?.settings.aspect);
-      for (const helper of this.cameraHelpers.children) {
-        if (helper.userData.entityId !== source.id) continue;
-        if (helper instanceof THREE.CameraHelper) {
-          const camera = helper.camera as THREE.PerspectiveCamera;
-          camera.position.fromArray(sampled.position);
-          camera.lookAt(new THREE.Vector3(...sampled.target));
-          camera.fov = sampled.fov;
-          camera.updateProjectionMatrix();
-          camera.updateMatrixWorld(true);
-          helper.update();
-        } else {
-          helper.position.fromArray(sampled.position);
-          helper.lookAt(new THREE.Vector3(...sampled.target));
-        }
-      }
-    }
+    updateCameraHelpers(this.cameraHelpers, this.project, sourceTime);
   }
 
   private updateDirectorHelpers(sampled: Map<string, SceneObject>) {
-    if (this.axisLine) {
-      this.axisLine.geometry.dispose();
-      (this.axisLine.material as THREE.Material).dispose();
-      this.axisLine.removeFromParent();
-      this.axisLine = null;
-    }
-    const axis = this.binding?.project.settings.axisActorIds || [];
-    const points = axis
-      .slice(0, 2)
-      .map((id) => this.objects.get(id)?.root.getWorldPosition(new THREE.Vector3()));
-    if (points.length === 2 && points.every(Boolean)) {
-      const a = points[0]!;
-      const b = points[1]!;
-      a.y = b.y = 0.016;
-      const direction = b.clone().sub(a).normalize();
-      a.addScaledVector(direction, -1.7);
-      b.addScaledVector(direction, 1.7);
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([a, b]),
-        new THREE.LineDashedMaterial({
-          color: '#b78f58',
-          dashSize: 0.16,
-          gapSize: 0.08,
-          transparent: true,
-          opacity: 0.65,
-        }),
-      );
-      line.computeLineDistances();
-      this.helpers.add(line);
-      this.axisLine = line;
-    }
-    this.clearHelpers(this.lookLines);
-    for (const object of sampled.values()) {
-      const rig = this.objects.get(object.id)?.rig;
-      if (!rig || !object.actor?.lookAtId) continue;
-      const target = this.objects.get(object.actor.lookAtId);
-      if (!target) continue;
-      const a = rig.head.getWorldPosition(new THREE.Vector3());
-      const b =
-        target.rig?.head.getWorldPosition(new THREE.Vector3()) ||
-        target.root.getWorldPosition(new THREE.Vector3());
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([a, b]),
-        new THREE.LineDashedMaterial({
-          color: '#94a3a9',
-          dashSize: 0.045,
-          gapSize: 0.065,
-          transparent: true,
-          opacity: 0.5,
-        }),
-      );
-      line.computeLineDistances();
-      this.lookLines.add(line);
-    }
+    this.directorHelpers.update(this.binding?.project.settings.axisActorIds ?? [], this.objects, sampled);
   }
 
   private clearHelpers(group: THREE.Group) {
@@ -808,6 +757,7 @@ export class SceneEngine {
   }
 
   private emitTransform() {
+    if (this.components.endTransform()) return;
     const target = this.transform.object;
     if (!this.canEditBinding || !target || !target.userData.entityId) return;
     this.options.onTransform?.(target.userData.entityId, {
@@ -830,6 +780,18 @@ export class SceneEngine {
     if (!this.pointerStart || this.dragging || this.transform.axis || event.button !== 0) return;
     if (Math.hypot(event.clientX - this.pointerStart.x, event.clientY - this.pointerStart.y) > 5) return;
     const bounds = this.canvas.getBoundingClientRect();
+    if (this.components.active) {
+      try {
+        this.components.pick(
+          [{ x: event.clientX - bounds.left, y: event.clientY - bounds.top }],
+          event.ctrlKey || event.metaKey ? 'remove' : event.shiftKey ? 'add' : 'replace',
+        );
+      } catch (error) {
+        this.options.onError?.(error as Error);
+      }
+      this.pointerStart = null;
+      return;
+    }
     const frame = this.getFrameRect();
     this.pointer.set(
       ((event.clientX - bounds.left - frame.x) / frame.width) * 2 - 1,
@@ -914,6 +876,7 @@ export class SceneEngine {
   }
 
   private drawFrame() {
+    this.components?.update();
     const active = this.activeCamera;
     const far = sceneFarPlane(active.position, this.sceneBounds);
     if (active.far !== far) {
@@ -959,6 +922,7 @@ export class SceneEngine {
   dispose() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.components.dispose();
     this.generation++;
     this.pendingBuild?.abort();
     cancelAnimationFrame(this.animationFrame);

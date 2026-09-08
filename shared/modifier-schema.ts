@@ -1,9 +1,28 @@
 import { z } from 'zod';
+import { advancedModifierSchemas } from './modifiers/schema';
 
 const identifier = z.string().min(1).max(200);
 const coordinate = z.number().finite().min(-100000).max(100000);
 const common = { id: identifier, enabled: z.boolean().default(true) };
 export const meshModifierSchema = z.discriminatedUnion('type', [
+  ...advancedModifierSchemas,
+  z
+    .object({
+      ...common,
+      type: z.literal('boolean'),
+      operandId: identifier,
+      operation: z.enum(['union', 'subtract', 'intersect']).default('subtract'),
+    })
+    .strict(),
+  z
+    .object({
+      ...common,
+      type: z.literal('bevel'),
+      width: z.number().finite().gt(0.000001).max(100000).default(0.05),
+      segments: z.number().int().min(1).max(16).default(3),
+      shape: z.number().finite().min(0).max(1).default(1),
+    })
+    .strict(),
   z
     .object({
       ...common,
@@ -11,6 +30,7 @@ export const meshModifierSchema = z.discriminatedUnion('type', [
       axis: z.enum(['x', 'y', 'z']).default('x'),
       offset: coordinate.default(0),
       keepOriginal: z.boolean().default(true),
+      weldThreshold: z.number().finite().min(0).max(1).optional(),
     })
     .strict(),
   z
@@ -37,7 +57,7 @@ export const modifierCommandDefinitions: { type: string; description: string; sc
   {
     type: 'modifier.add',
     description:
-      'Add an editable non-destructive mirror, array or Loop subdivision to an object. Source geometry is retained, order matters, and existing mesh/curve/terrain edits update the source. Mirror offsets and array offsets use local meters. Mirror copies are not welded or fused; use Boolean modeling after baking when a single solid is required.',
+      'Add an editable non-destructive modeling modifier. Supports mirror (optional seam welding), linear/curve arrays, Loop or Catmull-Clark subdivision, solidify, bend, twist, referenced Boolean and convex-shell bevel. Boolean retains operandId and uses evaluated operand geometry in base object/parent transforms, including hidden or locked operands; each operand is limited to 30000 triangles. Disabled Boolean references still require valid acyclic dependencies. Bevel acts on every non-coplanar edge of a convex closed outward-oriented shell; width is local meters, segments 1..16, shape 0 flat..1 circular, at most 256 profile planes. Source geometry is retained and order matters. Distances use local meters and angles degrees. Invalid inputs fail atomically.',
     schema: target
       .extend({ modifier: meshModifierSchema, index: z.number().int().min(0).optional() })
       .strict(),

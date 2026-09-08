@@ -3,6 +3,8 @@ import { createEmptyProject, createObject, id } from './project';
 import { projectSchema, validateProject } from './schema';
 import { createScene, selectProduction } from './production';
 import { remapActorTargets } from './actor-validation';
+import { referencedOperandIds } from './modifiers/dependencies';
+import { remapModifierReferences } from './modifier-references';
 import { objectFace } from './face-animation';
 import { DomainError } from './domain-error';
 import type { Project, SceneObject } from './types';
@@ -38,6 +40,7 @@ export const templateCaptureSchema = z
 
 function objectReferences(object: SceneObject): string[] {
   return [
+    ...referencedOperandIds(object),
     object.parentId,
     object.attachment?.objectId,
     object.actor?.lookAtId,
@@ -209,6 +212,7 @@ export function instantiateTemplate(project: Project, input: unknown) {
     if (clone.attachment) clone.attachment.objectId = objects.get(clone.attachment.objectId)!;
     if (clone.actor?.lookAtId) clone.actor.lookAtId = objects.get(clone.actor.lookAtId)!;
     remapActorTargets(clone, objects);
+    remapModifierReferences(clone, objects);
     for (const clip of objectFace(clone)?.clips ?? [])
       if (clip.audioId) clip.audioId = audio.get(clip.audioId) ?? null;
     for (const frame of clone.keyframes) {

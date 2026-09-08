@@ -2,7 +2,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { createHash } from 'node:crypto';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { DomainError } from '../shared/domain-error';
-import { meshToGeometry, modelingToMesh, primitiveToMesh } from '../shared/modeling-geometry';
+import { meshToGeometry } from '../shared/modeling-geometry';
+import { evaluateModelObject } from '../shared/object-modeling';
 import { quaternionFor, rotationFor, type MotionEvent, type MotionObject } from '../shared/motion';
 import {
   physicsBakeSchema,
@@ -100,16 +101,19 @@ function assertRigidTransform(project: Project, object: MotionObject, options: P
     throw new DomainError('Rigid-body parents cannot produce a sheared transform');
 }
 
-function colliderFor(object: MotionObject, settings: RigidBodySettings, scale: Vector3): RAPIER.ColliderDesc {
+function colliderFor(
+  project: Project,
+  object: MotionObject,
+  settings: RigidBodySettings,
+  scale: Vector3,
+): RAPIER.ColliderDesc {
   if (settings.shape === 'mesh') {
     if (settings.mode !== 'static') throw new DomainError('Triangle mesh colliders must be static');
     if (object.assetUrl)
       throw new DomainError(
         'Imported GLB bodies use primitive collision shapes; mesh colliders require an editable local mesh',
       );
-    const geometry = meshToGeometry(
-      object.modeling ? modelingToMesh(object.modeling) : primitiveToMesh(object),
-    );
+    const geometry = meshToGeometry(evaluateModelObject(project, object));
     try {
       const position = geometry.getAttribute('position');
       const vertices = new Float32Array(position.count * 3);
@@ -131,7 +135,7 @@ function colliderFor(object: MotionObject, settings: RigidBodySettings, scale: V
   let dimensions = object.dimensions;
   const center = new Vector3(0, object.type === 'phone' ? 0 : object.dimensions[1] / 2, 0);
   if (object.modeling) {
-    const geometry = meshToGeometry(modelingToMesh(object.modeling));
+    const geometry = meshToGeometry(evaluateModelObject(project, object));
     try {
       geometry.boundingBox!.getCenter(center);
       dimensions = geometry.boundingBox!.getSize(new Vector3()).toArray() as Vec3;
@@ -198,7 +202,7 @@ function addBody(
     true,
   );
   const collider = world.createCollider(
-    colliderFor(object, settings, scale)
+    colliderFor(project, object, settings, scale)
       .setMass(settings.mass)
       .setFriction(settings.friction)
       .setRestitution(settings.restitution)

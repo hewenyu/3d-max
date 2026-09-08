@@ -1,7 +1,13 @@
 import * as THREE from 'three';
-import { ADDITION, Brush, Evaluator, HalfEdgeMap, INTERSECTION, SUBTRACTION } from 'three-bvh-csg';
+import { meshBoolean } from './modifiers/boolean';
+import { evaluateModelObject } from './object-modeling';
+import { modelingWorldMatrix } from './modeling-transforms';
 import { modifyStack } from './modifier-operations';
 import type { Command, Project, SceneObject, Vec3 } from './types';
+import { allocateComponentId } from './topology/identity';
+import { ensureMeshIdentity } from './topology/identity';
+import { applyTopologyCommand } from './topology-commands';
+import { surfaceDataSchema } from './surfaces/schema';
 import {
   ModelingError,
   curveDataSchema,
@@ -13,14 +19,7 @@ import {
   type ModelingData,
   type TerrainData,
 } from './modeling';
-import {
-  faceNormal,
-  geometryToMesh,
-  meshToGeometry,
-  modelingToMesh,
-  primitiveToMesh,
-  terrainHeight,
-} from './modeling-geometry';
+import { faceNormal, meshToGeometry, terrainHeight } from './modeling-geometry';
 
 type ModelingObject = SceneObject & { modeling?: ModelingData };
 
@@ -33,10 +32,10 @@ function editable(project: Project, id: unknown): ModelingObject {
   return object;
 }
 
-function currentMesh(object: ModelingObject): MeshData {
+function currentMesh(object: ModelingObject, project: Project): MeshData {
   if (!supportsMeshConversion(object))
     throw new ModelingError(`Cannot convert ${object.type}; choose a primitive or editable modeling object`);
-  return object.modeling ? modelingToMesh(object.modeling) : primitiveToMesh(object);
+  return evaluateModelObject(project, object);
 }
 
 function indexedMesh(object: ModelingObject): MeshData {
@@ -45,9 +44,9 @@ function indexedMesh(object: ModelingObject): MeshData {
   return structuredClone(object.modeling);
 }
 
-function install(object: ModelingObject, input: ModelingData) {
+function installGeometry(project: Project, object: ModelingObject, input: ModelingData) {
   const modeling = modelingSchema.parse(input);
-  const geometry = meshToGeometry(modelingToMesh(modeling));
+  const geometry = meshToGeometry(evaluateModelObject(project, object, modeling));
   try {
     const size = geometry.boundingBox!.getSize(new THREE.Vector3());
     object.dimensions = [Math.max(0.001, size.x), Math.max(0.001, size.y), Math.max(0.001, size.z)];
@@ -55,6 +54,7 @@ function install(object: ModelingObject, input: ModelingData) {
     geometry.dispose();
   }
   object.modeling = modeling;
+  if (object.assetUrl) object.sourceAssetUrl ??= object.assetUrl;
   delete object.assetUrl;
   delete object.animationName;
   return { id: object.id, modeling, dimensions: object.dimensions };
@@ -66,62 +66,6 @@ function faceAt(mesh: MeshData, index: unknown) {
   return face;
 }
 
-function worldMatrix(project: Project, object: SceneObject, seen = new Set<string>()): THREE.Matrix4 {
-  if (seen.has(object.id)) throw new ModelingError('Object hierarchy contains a cycle');
-  seen.add(object.id);
-  if (object.attachment)
-    throw new ModelingError('Detach objects from a bone before computing Boolean geometry');
-  const matrix = new THREE.Matrix4().compose(
-    new THREE.Vector3(...object.position),
-    new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(...(object.rotation.map(THREE.MathUtils.degToRad) as [number, number, number]), 'XYZ'),
-    ),
-    new THREE.Vector3(...object.scale),
-  );
-  if (!object.parentId) return matrix;
-  const parent = project.objects.find((value) => value.id === object.parentId);
-  if (!parent) throw new ModelingError('Parent object is unavailable');
-  return worldMatrix(project, parent, seen).multiply(matrix);
-}
-
-function closedSolid(mesh: MeshData) {
-  const edges = new Map<string, { count: number; direction: number }>();
-  for (const face of mesh.faces) {
-    for (let index = 0; index < face.length; index++) {
-      const a = face[index];
-      const b = face[(index + 1) % face.length];
-      const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
-      const edge = edges.get(key) || { count: 0, direction: 0 };
-      edge.count++;
-      edge.direction += a < b ? 1 : -1;
-      edges.set(key, edge);
-    }
-  }
-  const allEdges = [...edges.values()];
-  if (allEdges.some((edge) => edge.count > 2 || (edge.count === 2 && edge.direction !== 0)))
-    throw new ModelingError('Boolean operands must be closed, consistently oriented solids');
-  if (allEdges.every((edge) => edge.count === 2)) return;
-  const geometry = meshToGeometry(mesh);
-  try {
-    // HalfEdgeMap matches split subsegments with unit-scale tolerances, independent of scene units.
-    const bounds = geometry.boundingBox!;
-    const center = bounds.getCenter(new THREE.Vector3());
-    const size = bounds.getSize(new THREE.Vector3());
-    const scale = 1 / Math.max(size.x, size.y, size.z);
-    geometry.translate(-center.x, -center.y, -center.z);
-    geometry.scale(scale, scale, scale);
-    const connectivity = Object.assign(new HalfEdgeMap(), {
-      matchDisjointEdges: true,
-      unmatchedEdges: -1,
-    });
-    connectivity.updateFrom(geometry);
-    if (connectivity.unmatchedEdges !== 0)
-      throw new ModelingError('Boolean operands must be closed, consistently oriented solids');
-  } finally {
-    geometry.dispose();
-  }
-}
-
 function booleanGeometry(
   project: Project,
   target: ModelingObject,
@@ -129,57 +73,15 @@ function booleanGeometry(
   operation: string,
 ): MeshData {
   if (target.id === operand.id) throw new ModelingError('Choose a different Boolean operand');
-  const targetMesh = currentMesh(target);
-  const operandMesh = currentMesh(operand);
-  closedSolid(targetMesh);
-  closedSolid(operandMesh);
-  if (
-    [targetMesh, operandMesh].some(
-      (mesh) => mesh.faces.reduce((sum, face) => sum + face.length - 2, 0) > 30000,
-    )
-  )
-    throw new ModelingError('Boolean operands are limited to 30000 triangles each');
-  const transform = worldMatrix(project, target).invert().multiply(worldMatrix(project, operand));
-  if (Math.abs(transform.determinant()) < 1e-10)
-    throw new ModelingError('Boolean operand transform is singular');
-  const leftGeometry = meshToGeometry(targetMesh);
-  const rightGeometry = meshToGeometry(operandMesh).applyMatrix4(transform);
-  if (transform.determinant() < 0) {
-    const index = rightGeometry.getIndex()!;
-    for (let offset = 0; offset < index.count; offset += 3) {
-      const a = index.getX(offset);
-      index.setX(offset, index.getX(offset + 2));
-      index.setX(offset + 2, a);
-    }
-    rightGeometry.computeVertexNormals();
-  }
-  const material = new THREE.MeshBasicMaterial();
-  const left = new Brush(leftGeometry, material);
-  const right = new Brush(rightGeometry, material);
-  left.updateMatrixWorld(true);
-  right.updateMatrixWorld(true);
-  const evaluator = new Evaluator();
-  // Constrained triangulation preserves curved cuts for subsequent Boolean operations.
-  Object.assign(evaluator, { useCDTClipping: true });
-  evaluator.attributes = ['position', 'normal'];
-  evaluator.useGroups = false;
-  let result: Brush | undefined;
-  try {
-    result = evaluator.evaluate(
-      left,
-      right,
-      operation === 'union' ? ADDITION : operation === 'subtract' ? SUBTRACTION : INTERSECTION,
-    );
-    return geometryToMesh(result.geometry);
-  } finally {
-    left.disposeCacheData();
-    right.disposeCacheData();
-    result?.disposeCacheData();
-    leftGeometry.dispose();
-    rightGeometry.dispose();
-    result?.geometry.dispose();
-    material.dispose();
-  }
+  const transform = modelingWorldMatrix(project, target)
+    .invert()
+    .multiply(modelingWorldMatrix(project, operand));
+  return meshBoolean(
+    currentMesh(target, project),
+    currentMesh(operand, project),
+    transform,
+    operation as 'union' | 'subtract' | 'intersect',
+  );
 }
 
 function replaceTerrain(object: ModelingObject, input: Record<string, unknown>): TerrainData {
@@ -212,9 +114,14 @@ function replaceTerrain(object: ModelingObject, input: Record<string, unknown>):
 }
 
 export function applyModelingCommand(project: Project, command: Command): unknown {
+  const install = (object: ModelingObject, input: ModelingData) => installGeometry(project, object, input);
   const payload = command.payload;
   const object = editable(project, payload.id);
-  if (command.type.startsWith('modifier.')) return install(object, modifyStack(object, command));
+  if (command.type.startsWith('modifier.'))
+    return install(
+      object,
+      modifyStack(object, command, (modeling) => evaluateModelObject(project, object, modeling)),
+    );
   if (object.modeling?.kind === 'stack' && command.type !== 'mesh.convert') {
     if (command.type === 'mesh.boolean')
       throw new ModelingError('Bake the modifier stack before a Boolean operation');
@@ -229,9 +136,15 @@ export function applyModelingCommand(project: Project, command: Command): unknow
       throw new ModelingError('Source edit did not produce base geometry');
     return { ...(result as object), ...install(object, { ...stack, base: sourceObject.modeling }) };
   }
+  if (command.type.startsWith('topology.')) {
+    const result = applyTopologyCommand(project, object, indexedMesh(object), command);
+    return { ...result, ...install(object, result.mesh) };
+  }
   switch (command.type) {
+    case 'surface.set':
+      return install(object, surfaceDataSchema.parse(payload.surface));
     case 'mesh.convert':
-      return install(object, currentMesh(object));
+      return install(object, ensureMeshIdentity(currentMesh(object, project)));
     case 'mesh.set':
       return install(
         object,
@@ -247,6 +160,7 @@ export function applyModelingCommand(project: Project, command: Command): unknow
     case 'mesh.vertex.add': {
       const mesh = indexedMesh(object);
       mesh.vertices.push(payload.position as Vec3);
+      if (mesh.identity) mesh.identity.vertexIds.push(allocateComponentId(mesh.identity, 'vertex'));
       return { ...install(object, mesh), vertexIndex: mesh.vertices.length - 1 };
     }
     case 'mesh.vertex.delete': {
@@ -256,6 +170,7 @@ export function applyModelingCommand(project: Project, command: Command): unknow
       if (mesh.faces.some((face) => face.includes(index)))
         throw new ModelingError('Remove faces referencing this vertex before deleting it');
       mesh.vertices.splice(index, 1);
+      mesh.identity?.vertexIds.splice(index, 1);
       mesh.faces = mesh.faces.map((face) => face.map((vertex) => (vertex > index ? vertex - 1 : vertex)));
       return install(object, mesh);
     }
@@ -266,12 +181,14 @@ export function applyModelingCommand(project: Project, command: Command): unknow
       const cap = face.map((index) => {
         const position = new THREE.Vector3(...mesh.vertices[index]).add(offset);
         mesh.vertices.push(position.toArray() as Vec3);
+        if (mesh.identity) mesh.identity.vertexIds.push(allocateComponentId(mesh.identity, 'vertex'));
         return mesh.vertices.length - 1;
       });
       mesh.faces[payload.faceIndex as number] = cap;
       face.forEach((index, side) => {
         const next = (side + 1) % face.length;
         mesh.faces.push([index, face[next], cap[next], cap[side]]);
+        if (mesh.identity) mesh.identity.faceIds.push(allocateComponentId(mesh.identity, 'face'));
       });
       return install(object, mesh);
     }
@@ -279,11 +196,13 @@ export function applyModelingCommand(project: Project, command: Command): unknow
       const mesh = indexedMesh(object);
       faceAt(mesh, payload.faceIndex);
       mesh.faces.splice(payload.faceIndex as number, 1);
+      mesh.identity?.faceIds.splice(payload.faceIndex as number, 1);
       return install(object, mesh);
     }
     case 'mesh.face.add': {
       const mesh = indexedMesh(object);
       mesh.faces.push(payload.indices as number[]);
+      if (mesh.identity) mesh.identity.faceIds.push(allocateComponentId(mesh.identity, 'face'));
       return install(object, mesh);
     }
     case 'mesh.boolean': {

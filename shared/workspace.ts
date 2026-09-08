@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { componentWorkspaceCommandSchema, componentWorkspaceStateSchema } from './topology-workspace';
 
 const id = z.string().min(1).max(200);
 const finite = z.number().finite();
@@ -13,8 +14,10 @@ export const workspaceDialogSchema = z.enum([
   'compare',
   'script',
   'review',
+  'model-assets',
 ]);
 export const workspaceCommandSchema = z.discriminatedUnion('type', [
+  componentWorkspaceCommandSchema,
   z
     .object({
       type: z.literal('selection'),
@@ -142,6 +145,7 @@ export const workspaceStateSchema = z.object({
   projectRevision: z.number().int().min(0),
   context: z.object({ sceneId: id.nullable(), performanceId: id.nullable() }),
   selection: z.array(id),
+  components: componentWorkspaceStateSchema.optional(),
   view: z.enum(['edit', 'camera', 'top']),
   observation: workspaceObservationSchema,
   transport: z.object({

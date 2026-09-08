@@ -1,0 +1,33 @@
+   OpenSubdiv
+   Copyright 2013 Pixar
+   All rights reserved.
+
+   This product includes software developed at:
+       Pixar (http://www.pixar.com/)
+       Dreamworks Animation (http://www.dreamworksanimation.com/)
+       Autodesk, Inc. (http://www.autodesk.com/)
+       Google, Inc. (http://www.google.com/)
+       DigitalFish (http://digitalfish.com/)
+
+   ============================================================================
+
+   OpenSubdiv WASM Port
+   Copyright 2024-2025 nasedkinpv
+
+   This WebAssembly port includes additional work:
+       WASM bindings and Three.js integration by nasedkinpv
+       Based on discere-os/OpenSubdiv.wasm fork (https://github.com/discere-os/OpenSubdiv.wasm)
+
+   ============================================================================
+
+   TRADEMARK NOTICE
+
+   "OpenSubdiv" is a trademark of Pixar Animation Studios.
+   "Pixar" is a trademark of Pixar Animation Studios.
+   "DreamWorks" is a trademark of DreamWorks Animation LLC.
+
+   This project is NOT affiliated with, endorsed by, or sponsored by Pixar
+   Animation Studios, DreamWorks Animation, or any of their affiliates.
+
+   The use of these names is solely for attribution purposes as required by
+   Section 4(c) of the Tomorrow Open Source Technology License 1.0.

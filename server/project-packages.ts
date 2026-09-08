@@ -42,6 +42,7 @@ function projectAssetUrls(project: Project): string[] {
   ];
   return [
     ...objects.flatMap((object) => (object.assetUrl ? [object.assetUrl] : [])),
+    ...objects.flatMap((object) => (object.sourceAssetUrl ? [object.sourceAssetUrl] : [])),
     ...audio.map((clip) => clip.url),
   ];
 }

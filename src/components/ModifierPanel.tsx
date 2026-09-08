@@ -1,14 +1,25 @@
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, Check, Layers, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Copy, Layers, Plus, Trash2 } from 'lucide-react';
 import type { MeshModifier } from '../../shared/modifier-schema';
-import type { SceneObject } from '../../shared/types';
+import type { Project, SceneObject } from '../../shared/types';
+import { supportsMeshConversion } from '../../shared/modeling';
 import type { EditorActions } from '../useEditor';
-import { Field, IconButton, NumberInput, VectorInput } from './Controls';
+import { Field, IconButton } from './Controls';
+import { ModifierParameters } from './modeling/ModifierParameters';
+import { defaultModifier, modifierNames } from './modeling/modifier-defaults';
 import './modifiers.css';
 
-const names = { mirror: '镜像', array: '阵列', subdivision: '细分曲面' };
-export function ModifierPanel({ object, editor }: { object: SceneObject; editor: EditorActions }) {
+export function ModifierPanel({
+  object,
+  editor,
+  project,
+}: {
+  object: SceneObject;
+  editor: EditorActions;
+  project: Project;
+}) {
   const [kind, setKind] = useState<MeshModifier['type']>('array');
+  const [operandId, setOperandId] = useState('');
   if (
     object.vehicle ||
     object.effect ||
@@ -16,22 +27,23 @@ export function ModifierPanel({ object, editor }: { object: SceneObject; editor:
   )
     return null;
   const modifiers = object.modeling?.kind === 'stack' ? object.modeling.modifiers : [];
+  const operands = project.objects.filter(
+    (candidate) =>
+      candidate.id !== object.id &&
+      !candidate.vehicle &&
+      !candidate.effect &&
+      !candidate.attachment &&
+      supportsMeshConversion(candidate),
+  );
+  const chosenOperand = operands.some((candidate) => candidate.id === operandId)
+    ? operandId
+    : operands[0]?.id;
   const set = (modifier: MeshModifier) => editor.run('modifier.set', { id: object.id, modifier });
   const add = () => {
-    const common = { id: `modifier-${crypto.randomUUID()}`, enabled: true };
-    const modifier: MeshModifier =
-      kind === 'array'
-        ? { ...common, type: 'array', count: 2, offset: [Math.max(object.dimensions[0], 0.1) * 1.5, 0, 0] }
-        : kind === 'mirror'
-          ? {
-              ...common,
-              type: 'mirror',
-              axis: 'x',
-              offset: Math.max(object.dimensions[0], 0.1) * 0.75,
-              keepOriginal: true,
-            }
-          : { ...common, type: 'subdivision', iterations: 1, preserveEdges: false, flatOnly: false };
-    editor.run('modifier.add', { id: object.id, modifier });
+    editor.run('modifier.add', {
+      id: object.id,
+      modifier: defaultModifier(kind, object.dimensions, chosenOperand),
+    });
   };
   return (
     <div className="modifier-panel">
@@ -46,14 +58,35 @@ export function ModifierPanel({ object, editor }: { object: SceneObject; editor:
           value={kind}
           onChange={(event) => setKind(event.target.value as MeshModifier['type'])}
         >
-          {Object.entries(names).map(([value, label]) => (
+          {Object.entries(modifierNames).map(([value, label]) => (
             <option key={value} value={value}>
               {label}
             </option>
           ))}
         </select>
-        <IconButton icon={Plus} label="添加修改器" disabled={modifiers.length >= 16} onClick={add} />
+        <IconButton
+          icon={Plus}
+          label="添加修改器"
+          disabled={modifiers.length >= 16 || (kind === 'boolean' && !chosenOperand)}
+          onClick={add}
+        />
       </div>
+      {kind === 'boolean' && (
+        <Field label="布尔操作数">
+          <select
+            aria-label="新增布尔修改器操作数"
+            value={chosenOperand ?? ''}
+            onChange={(event) => setOperandId(event.target.value)}
+          >
+            {!operands.length && <option value="">无可用对象</option>}
+            {operands.map((operand) => (
+              <option key={operand.id} value={operand.id}>
+                {operand.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       {modifiers.map((modifier, index) => (
         <div className="modifier-item" key={modifier.id}>
           <div className="modifier-heading">
@@ -63,7 +96,7 @@ export function ModifierPanel({ object, editor }: { object: SceneObject; editor:
               checked={modifier.enabled}
               onChange={(event) => set({ ...modifier, enabled: event.target.checked })}
             />
-            <span>{names[modifier.type]}</span>
+            <span>{modifierNames[modifier.type]}</span>
             <IconButton
               icon={ArrowUp}
               label={`上移修改器 ${index + 1}`}
@@ -81,95 +114,24 @@ export function ModifierPanel({ object, editor }: { object: SceneObject; editor:
               }
             />
             <IconButton
+              icon={Copy}
+              label={`复制修改器 ${index + 1}`}
+              disabled={modifiers.length >= 16}
+              onClick={() =>
+                editor.run('modifier.add', {
+                  id: object.id,
+                  modifier: { ...structuredClone(modifier), id: `modifier-${crypto.randomUUID()}` },
+                  index: index + 1,
+                })
+              }
+            />
+            <IconButton
               icon={Trash2}
               label={`删除修改器 ${index + 1}`}
               onClick={() => editor.run('modifier.remove', { id: object.id, modifierId: modifier.id })}
             />
           </div>
-          {modifier.type === 'mirror' && (
-            <>
-              <Field label="镜像轴">
-                <select
-                  aria-label={`修改器 ${index + 1} 镜像轴`}
-                  value={modifier.axis}
-                  onChange={(event) => set({ ...modifier, axis: event.target.value as 'x' | 'y' | 'z' })}
-                >
-                  <option value="x">X</option>
-                  <option value="y">Y</option>
-                  <option value="z">Z</option>
-                </select>
-              </Field>
-              <Field label="镜面位置">
-                <NumberInput
-                  label={`修改器 ${index + 1} 镜面位置`}
-                  value={modifier.offset}
-                  min={-100000}
-                  max={100000}
-                  step={0.1}
-                  suffix="m"
-                  onChange={(offset) => set({ ...modifier, offset })}
-                />
-              </Field>
-              <label className="row">
-                <input
-                  type="checkbox"
-                  checked={modifier.keepOriginal}
-                  onChange={(event) => set({ ...modifier, keepOriginal: event.target.checked })}
-                />
-                保留原几何
-              </label>
-            </>
-          )}
-          {modifier.type === 'array' && (
-            <>
-              <Field label="数量">
-                <NumberInput
-                  label={`修改器 ${index + 1} 数量`}
-                  value={modifier.count}
-                  min={2}
-                  max={32}
-                  step={1}
-                  onChange={(count) => set({ ...modifier, count })}
-                />
-              </Field>
-              <VectorInput
-                label={`修改器 ${index + 1} 偏移`}
-                value={modifier.offset}
-                step={0.1}
-                onChange={(offset) => set({ ...modifier, offset })}
-              />
-            </>
-          )}
-          {modifier.type === 'subdivision' && (
-            <>
-              <Field label="细分级别">
-                <NumberInput
-                  label={`修改器 ${index + 1} 细分级别`}
-                  value={modifier.iterations}
-                  min={1}
-                  max={3}
-                  step={1}
-                  onChange={(iterations) => set({ ...modifier, iterations })}
-                />
-              </Field>
-              <label className="row">
-                <input
-                  type="checkbox"
-                  checked={modifier.preserveEdges}
-                  onChange={(event) => set({ ...modifier, preserveEdges: event.target.checked })}
-                />
-                保持边界
-              </label>
-              <label className="row">
-                <input
-                  type="checkbox"
-                  checked={modifier.flatOnly}
-                  onChange={(event) => set({ ...modifier, flatOnly: event.target.checked })}
-                />
-                仅细分面片
-              </label>
-            </>
-          )}
+          <ModifierParameters modifier={modifier} index={index} onChange={set} operands={operands} />
         </div>
       ))}
       {modifiers.length > 0 && (

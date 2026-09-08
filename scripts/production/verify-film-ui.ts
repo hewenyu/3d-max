@@ -125,7 +125,8 @@ try {
       assert.deepEqual(await film.call<Project>('project_open', { id: accepted.id }), accepted);
       const currentJob = await film.call<RenderJob>('render_status', { id: job.id });
       assert.equal(currentJob.status, 'completed');
-      assert.equal(currentJob.projectRevision, accepted.revision);
+      assert.equal(currentJob.projectRevision, job.projectRevision);
+      assert.ok(currentJob.projectRevision <= accepted.revision);
       assert.equal(currentJob.totalFrames, job.totalFrames);
       const fps = job.options.fps!;
       assert.ok(fps > 0);

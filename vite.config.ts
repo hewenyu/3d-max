@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  worker: { format: 'es' },
   build: { rollupOptions: { input: { editor: resolve('index.html'), review: resolve('review.html') } } },
   server: {
     port: Number(process.env.WEB_PORT || 5173),

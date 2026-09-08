@@ -1,6 +1,7 @@
 import { captureTemplate } from '../../shared/templates';
 import { parseScript } from '../../shared/script-parser';
 import type { Command, Project } from '../../shared/types';
+import { topologyCommandCases } from './topology-command-cases';
 
 export interface McpCommandCase {
   type: string;
@@ -151,6 +152,7 @@ export function mcpCommandCases(audioUrl: string): McpCommandCase[] {
     },
   });
   return [
+    ...topologyCommandCases(),
     item('production.initialize', {}),
     item('lighting.plan.create', { id: 'lighting-new', name: 'Key light' }),
     item('lighting.plan.update', { id: 'lighting', patch: { name: 'Updated light' } }, [

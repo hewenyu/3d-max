@@ -1,6 +1,8 @@
 import { productionPerformance, resolveShotProject } from '../../shared/production';
 import type { Project, SceneObject, Shot } from '../../shared/types';
 import { buildObject, disposeBuiltObject, type BuiltObject } from './ObjectFactory';
+import { modelingDependencyFingerprint } from '../../shared/object-modeling';
+import { evaluateGeometry } from './GeometryEvaluation';
 
 import { distanceTable, type DistanceTable } from '../../shared/motion-distance';
 export { gaitDistance } from '../../shared/motion-distance';
@@ -27,6 +29,7 @@ interface ResourceEntry {
   references: number;
   pending: Promise<BuiltObject>;
   value?: BuiltObject;
+  controller: AbortController;
 }
 
 function geometrySignature(object: SceneObject) {
@@ -78,6 +81,7 @@ export class SceneResourceCache {
         entry.references--;
         if (entry.references > 0) continue;
         if (this.entries.get(key) === entry) this.entries.delete(key);
+        entry.controller.abort();
         if (entry.value) this.dispose(entry.value);
       }
     };
@@ -96,14 +100,27 @@ export class SceneResourceCache {
       };
       bindings.set(identity.key, binding);
       for (const object of view.objects) {
-        const key = JSON.stringify([identity.sceneKey, object.id, geometrySignature(object)]);
+        const key = JSON.stringify([
+          identity.sceneKey,
+          object.id,
+          geometrySignature(object),
+          modelingDependencyFingerprint(view, object),
+        ]);
         let entry = leases.get(key);
         if (!entry) {
           entry = this.entries.get(key);
           if (!entry) {
+            const controller = new AbortController();
             const created: ResourceEntry = {
+              controller,
               references: 0,
-              pending: Promise.resolve().then(() => this.build(object)),
+              pending: Promise.resolve().then(() => {
+                const evaluated = object.modeling
+                  ? evaluateGeometry(view, object, controller.signal)
+                  : undefined;
+                void evaluated?.catch(() => {});
+                return this.build(object, evaluated);
+              }),
             };
             created.pending.then(
               (value) => {
@@ -142,6 +159,10 @@ export class SceneResourceCache {
         if (signal.aborted) return null;
         const failure = results.find((result) => result.status === 'rejected');
         if (failure?.status === 'rejected') throw failure.reason;
+        for (const binding of bindings.values())
+          binding.objects = new Map(
+            binding.project.objects.map((object) => [object.id, binding.objects.get(object.id)!]),
+          );
         return { workspace, shots, bindings: [...bindings.values()], release };
       });
       return await Promise.race([prepared, cancelled]);

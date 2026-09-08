@@ -2,14 +2,19 @@ import { ModelingError, modifierStackSchema, type ModelingData, type ModifierSta
 import { modelingToMesh, primitiveToMesh } from './modeling-geometry';
 import { meshModifierSchema } from './modifier-schema';
 import type { Command, SceneObject } from './types';
+import type { MeshData } from './modeling';
 
-export function modifyStack(object: SceneObject, command: Command): ModelingData {
+export function modifyStack(
+  object: SceneObject,
+  command: Command,
+  evaluate?: (modeling: ModelingData) => MeshData,
+): ModelingData {
   if (object.vehicle || object.effect)
     throw new ModelingError('Modifiers require mesh geometry, not a vehicle or effect rig');
   const payload = command.payload;
   if (command.type === 'modifier.bake') {
     if (object.modeling?.kind !== 'stack') throw new ModelingError('The object has no modifier stack');
-    return modelingToMesh(object.modeling);
+    return evaluate ? evaluate(object.modeling) : modelingToMesh(object.modeling);
   }
   let stack: ModifierStack;
   if (object.modeling?.kind === 'stack') stack = structuredClone(object.modeling);

@@ -124,7 +124,9 @@ export function ObjectInspector({
   };
   return (
     <>
-      {object.type === 'model' && <ModelAssetPanel object={object} project={project} editor={editor} />}
+      {object.type === 'model' && !object.modeling && (
+        <ModelAssetPanel object={object} project={project} editor={editor} />
+      )}
       <Section
         title="对象"
         extra={
@@ -221,7 +223,7 @@ export function ObjectInspector({
         </fieldset>
       </Section>
       {!current.actor && object.type !== 'group' && !object.vehicle && !object.effect && (
-        <ModelingPanel object={object} project={project} editor={editor} />
+        <ModelingPanel object={object} project={project} editor={editor} sourceTime={sourceTime} />
       )}
       <MotionPanel object={object} editor={editor} sourceTime={sourceTime} />
       <PhysicsPanel object={object} project={project} editor={editor} sourceTime={sourceTime} />
@@ -297,7 +299,7 @@ export function ObjectInspector({
           diagnostics={diagnostics}
         />
       )}
-      {(object.actor || object.type === 'model') && (
+      {(object.actor || (object.type === 'model' && !object.modeling)) && (
         <FacePanel object={object} project={project} time={sourceTime} editor={editor} onSeek={onSeek} />
       )}
       {object.type !== 'actor' && (

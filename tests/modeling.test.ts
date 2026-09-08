@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createEmptyProject, createObject } from '../shared/project';
 import { applyCommands } from '../shared/commands';
 import type { Project, SceneObject } from '../shared/types';
+import { applyModelingCommand } from '../shared/modeling-operations';
 import {
-  applyModelingCommand,
   curveDataSchema,
   meshDataSchema,
   modelingCommandDefinitions,

@@ -21,6 +21,7 @@
     "@dimforge/rapier3d-compat": "^0.20.0",
     "@gltf-transform/core": "^4.5.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@nasedkinpv/opensubdiv-wasm": "0.2.0",
     "dequal": "^2.0.3",
     "express": "^5.1.0",
     "fountain-js": "^1.2.4",
@@ -30,6 +31,7 @@
     "react-dom": "^19.1.0",
     "three": "^0.180.0",
     "three-bvh-csg": "^0.0.18",
+    "three-mesh-bvh": "0.9.14",
     "three-subdivide": "^1.1.5",
     "zod": "^3.25.76"
   },

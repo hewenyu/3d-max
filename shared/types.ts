@@ -73,6 +73,7 @@ export interface SceneObject {
   };
   attachment?: Attachment | null;
   assetUrl?: string;
+  sourceAssetUrl?: string;
   animationName?: string;
   animationIndex?: number | null;
   morph?: ModelMorph;

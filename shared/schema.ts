@@ -3,6 +3,7 @@ import type { Project } from './types';
 import { clipDuration, hasSpeedRamp, retimingSourceDuration } from './time-map';
 import { transitionIssues } from './transitions';
 import { modelingSchema } from './modeling';
+import { validateAdvancedModeling } from './modeling-validation';
 import { createProductionSchema, validateProduction } from './production-schema';
 import { resolveShotProject } from './production';
 import { lightingPlanSchema, lightingSchema, validateLightingPlans } from './lighting-plans';
@@ -103,6 +104,7 @@ export const objectSchema = z
       .optional(),
     attachment: attachmentSchema.nullable().optional(),
     assetUrl: z.string().max(4096).optional(),
+    sourceAssetUrl: z.string().max(4096).optional(),
     animationName: z.string().max(200).optional(),
     animationIndex: z.number().int().min(0).max(10000).nullable().optional(),
     morph: modelMorphSchema.optional(),
@@ -333,6 +335,7 @@ export function validateProject(input: unknown): Project {
     'Active sequence does not exist',
   );
   p.objects.forEach((object) => {
+    validateAdvancedModeling(object.modeling, p, object);
     validateActorTargets(object, objects);
     validateFace(object, p);
     validateMotionObject(object);

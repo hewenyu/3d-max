@@ -33,6 +33,7 @@ import { registerTransferTools } from './transfer-mcp';
 import { getWorkspaceService } from './workspace-service';
 import { registerWorkspaceTools } from './workspace-mcp';
 import { registerViewportTools } from './viewport-mcp';
+import { registerModelingTools } from './modeling-mcp';
 import {
   deleteTemplate,
   getTemplate,
@@ -90,6 +91,7 @@ export function createMcpServer(store: Store, render: RenderService, config: Ser
         'Editable local 3D white-model director previsualization. Read project_get first. All distances are meters, rotations are degrees, Y is up, actors face +Z. Commands are atomic and shared with the browser editor. Read project ID and revision and use projectId/expectedRevision/requestId. Respect locked objects. Render jobs bind immutable project snapshots. Asset URLs must refer to uploads in this server.',
     },
   );
+  registerModelingTools(server, store, config);
   server.registerTool(
     'speech_catalog',
     {

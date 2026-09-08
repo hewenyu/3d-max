@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, execute, getProject } from './api';
 import type { Command, CommandRequest, Project, RenderJob } from '../shared/types';
+import type { ModelingJob } from '../shared/modeling-jobs';
+import { executeModelingJob, needsModelingWorker } from './modeling-jobs';
 
 interface CommandOptions {
   expectedContext?: CommandRequest['expectedContext'];
@@ -14,6 +16,7 @@ export function useEditor() {
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [modelingJob, setModelingJob] = useState<ModelingJob | null>(null);
   const [jobs, setJobs] = useState<RenderJob[]>([]);
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   const current = useRef(project);
@@ -94,16 +97,15 @@ export function useEditor() {
         }
         setBusy(true);
         try {
-          const result = await execute(
+          const commands =
             typeof type === 'function'
               ? type(current.current)
               : Array.isArray(type)
                 ? type
-                : [{ type, payload }],
-            current.current.revision,
-            current.current.id,
-            expectedContext,
-          );
+                : [{ type, payload }];
+          const result = needsModelingWorker(current.current, commands)
+            ? await executeModelingJob(current.current, commands, setModelingJob)
+            : await execute(commands, current.current.revision, current.current.id, expectedContext);
           if (current.current?.id === targetProjectId) accept(result.project);
           refreshHistory();
           return result;
@@ -180,6 +182,15 @@ export function useEditor() {
     setError,
     connected,
     busy,
+    modelingJob,
+    cancelModeling: async () => {
+      if (modelingJob)
+        setModelingJob(
+          await api<ModelingJob>(`/modeling/jobs/${encodeURIComponent(modelingJob.id)}/cancel`, {
+            method: 'POST',
+          }),
+        );
+    },
     jobs,
     setJobs,
     history,

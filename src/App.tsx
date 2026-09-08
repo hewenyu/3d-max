@@ -39,7 +39,7 @@ import { Stage, type ViewMode } from './components/Stage';
 import { ScenePanel } from './components/ScenePanel';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { Timeline } from './components/Timeline';
-import { IconButton, timecode } from './components/Controls';
+import { IconButton, Modal, timecode } from './components/Controls';
 import { ConnectionDialog, CutReviewDialog, ExportDialog, NewProjectDialog } from './components/Dialogs';
 import { ProjectsDialog } from './components/ProjectsDialog';
 import { ContinuityDialog } from './components/ContinuityDialog';
@@ -50,12 +50,17 @@ import { ReviewDialog } from './components/ReviewDialog';
 import type { SceneEngine } from './engine/SceneEngine';
 import { useAppWorkspace } from './workspace/useAppWorkspace';
 import { WorkspaceSurfaceContext, WorkspaceSurfaces } from './workspace/Surfaces';
+import { TopologyWorkspaceProvider } from './workspace/TopologyWorkspace';
+import { ModelingJobStatus } from './components/ModelingJobStatus';
+import { ModelAssetsPanel } from './components/modeling/ModelAssetsPanel';
 
 export default function App() {
   const surfaces = useRef(new WorkspaceSurfaces()).current;
   return (
     <WorkspaceSurfaceContext.Provider value={surfaces}>
-      <EditorWorkspace />
+      <TopologyWorkspaceProvider>
+        <EditorWorkspace />
+      </TopologyWorkspaceProvider>
     </WorkspaceSurfaceContext.Provider>
   );
 }
@@ -77,7 +82,17 @@ function EditorWorkspace() {
   const [rightVisible, setRightVisible] = useState(true);
   const [mobilePanel, setMobilePanel] = useState<'left' | 'right' | null>(null);
   const [dialog, setDialog] = useState<
-    'export' | 'mcp' | 'new' | 'projects' | 'cuts' | 'continuity' | 'compare' | 'script' | 'review' | null
+    | 'export'
+    | 'mcp'
+    | 'new'
+    | 'projects'
+    | 'cuts'
+    | 'continuity'
+    | 'compare'
+    | 'script'
+    | 'review'
+    | 'model-assets'
+    | null
   >(null);
   const [projectMenu, setProjectMenu] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -204,6 +219,10 @@ function EditorWorkspace() {
       }
       if (event.key.toLowerCase() === 'f') engine.current?.focus();
       if (event.key === 'Escape') {
+        if (engine.current?.cancelTransform()) {
+          event.preventDefault();
+          return;
+        }
         setSelected([]);
         setMobilePanel(null);
       }
@@ -400,6 +419,12 @@ function EditorWorkspace() {
         <div className="tools-group right-tools">
           <IconButton
             className="desktop-viewport-tool"
+            icon={Box}
+            label="模型文件"
+            onClick={() => setDialog('model-assets')}
+          />
+          <IconButton
+            className="desktop-viewport-tool"
             icon={ClipboardCheck}
             label="连续性审查"
             onClick={() => {
@@ -445,6 +470,7 @@ function EditorWorkspace() {
           <span className="tool-divider" />
           <ViewportToolsMenu
             actions={[
+              { label: '模型文件', icon: Box, run: () => setDialog('model-assets') },
               { label: '撤销', icon: Undo2, disabled: !editor.history.canUndo, run: () => editor.undo() },
               {
                 label: '重做',
@@ -521,6 +547,7 @@ function EditorWorkspace() {
           onClose={() => setMobilePanel(null)}
         />
         <section className="viewport">
+          <ModelingJobStatus editor={editor} />
           <Stage
             project={project}
             time={playback.time}
@@ -635,6 +662,16 @@ function EditorWorkspace() {
         <ExportDialog project={project} shot={shot} editor={editor} onClose={() => setDialog(null)} />
       )}
       {dialog === 'mcp' && <ConnectionDialog onClose={() => setDialog(null)} />}
+      {dialog === 'model-assets' && (
+        <Modal title="模型文件" onClose={() => setDialog(null)}>
+          <ModelAssetsPanel
+            project={project}
+            editor={editor}
+            objectIds={selected.filter((id) => project.objects.some((object) => object.id === id))}
+            sourceTime={sample?.sourceTime ?? 0}
+          />
+        </Modal>
+      )}
       {dialog === 'script' && (
         <ScriptImportDialog
           editor={editor}

@@ -4,7 +4,9 @@ import * as THREE from 'three';
 import { createObject } from '../shared/project';
 import { syncProduction } from '../shared/production';
 import { gaitDistance, SceneResourceCache } from '../src/engine/SceneResources';
-import type { BuiltObject } from '../src/engine/ObjectFactory';
+import { buildObject, disposeBuiltObject, type BuiltObject } from '../src/engine/ObjectFactory';
+import { primitiveToMesh } from '../shared/modeling-geometry';
+import type { MeshData } from '../shared/modeling';
 import { productionRenderFixture } from './fixtures/production-render';
 
 const signal = () => new AbortController().signal;
@@ -81,4 +83,68 @@ test('cancelled and failed preloads preserve live resources and dispose delayed 
   assert.equal(disposed.length, 1);
   live.release();
   assert.equal(disposed.length, 5);
+});
+
+test('asynchronous geometry preserves project material sorting and binding insertion order', async () => {
+  const model = createObject('box', 'delayed model');
+  model.modeling = primitiveToMesh(model);
+  const primitive = createObject('box', 'ready primitive');
+  let resolveGeometry!: (mesh: MeshData) => void;
+  const delayed = new Promise<MeshData>((resolve) => {
+    resolveGeometry = resolve;
+  });
+  const pending = buildObject(model, delayed);
+  const ready = await buildObject(primitive);
+  resolveGeometry(model.modeling);
+  const built = await pending;
+  const firstMaterial = (built.root.children[0] as THREE.Mesh).material as THREE.Material & { id: number };
+  const secondMaterial = (ready.root.children[0] as THREE.Mesh).material as THREE.Material & { id: number };
+  assert.ok(
+    firstMaterial.id < secondMaterial.id,
+    'material IDs must follow project order despite geometry completion order',
+  );
+  disposeBuiltObject(built);
+  disposeBuiltObject(ready);
+  const project = productionRenderFixture();
+  let releaseFirst!: () => void;
+  const firstReady = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const cache = new SceneResourceCache(async (object) => {
+    if (object.id === project.objects[0].id) await firstReady;
+    return { root: new THREE.Group() };
+  });
+  const loading = cache.prepare(project, signal());
+  await Promise.resolve();
+  releaseFirst();
+  const resources = (await loading)!;
+  for (const binding of resources.bindings)
+    assert.deepEqual(
+      [...binding.objects.keys()],
+      binding.project.objects.map((object) => object.id),
+    );
+  resources.release();
+});
+
+test('failed asynchronous modeled geometry disposes its preallocated material and rejects the load', async () => {
+  const object = createObject('box');
+  object.modeling = primitiveToMesh(object);
+  let rejectGeometry!: (error: Error) => void;
+  const geometry = new Promise<MeshData>((_, reject) => {
+    rejectGeometry = reject;
+  });
+  const dispose = THREE.Material.prototype.dispose;
+  let disposed = 0;
+  THREE.Material.prototype.dispose = function () {
+    disposed++;
+    dispose.call(this);
+  };
+  try {
+    const pending = buildObject(object, geometry);
+    rejectGeometry(new Error('Geometry cancelled'));
+    await assert.rejects(pending, /Geometry cancelled/);
+    assert.equal(disposed, 1);
+  } finally {
+    THREE.Material.prototype.dispose = dispose;
+  }
 });

@@ -7,6 +7,7 @@ import { applyCommands, validateProject } from '../shared/commands.ts';
 import { createDemoProject, createEmptyProject } from '../shared/project.ts';
 import { ApiError } from './errors.ts';
 import { assertModelAnimation } from './model-service';
+import type { ModelingJobCheckedCommit } from './modeling-jobs-protocol';
 
 export interface AssetRecord {
   id: string;
@@ -137,9 +138,11 @@ export class Store extends EventEmitter {
     }
     for (const { url, kind } of [
       ...project.objects.map((object) => ({ url: object.assetUrl, kind: 'model/' })),
+      ...project.objects.map((object) => ({ url: object.sourceAssetUrl, kind: 'model/' })),
       ...project.audio.map((clip) => ({ url: clip.url, kind: 'audio/' })),
       ...(project.production?.scenes.flatMap((scene) => [
         ...scene.objects.map((object) => ({ url: object.assetUrl, kind: 'model/' })),
+        ...scene.objects.map((object) => ({ url: object.sourceAssetUrl, kind: 'model/' })),
         ...scene.performances.flatMap((take) =>
           take.audio.map((clip) => ({ url: clip.url, kind: 'audio/' })),
         ),
@@ -277,6 +280,63 @@ export class Store extends EventEmitter {
       return response;
     });
     if (!result.replayed) this.emit('project', result.project);
+    return result;
+  }
+
+  commitModelingJob(
+    checked: ModelingJobCheckedCommit,
+    publish: (response: CommandResponse) => void,
+  ): CommandResponse {
+    const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const result = this.transaction(() => {
+      const current = this.project();
+      const { request, snapshot, response } = checked;
+      if (
+        digest(snapshot) !== checked.snapshotHash ||
+        digest(request) !== checked.requestHash ||
+        digest(response) !== checked.responseHash
+      )
+        throw new ApiError(
+          'MODELING_RESULT_MISMATCH',
+          'Modeling worker snapshot or result changed before commit',
+          409,
+        );
+      if (current.id !== request.projectId || snapshot.id !== request.projectId)
+        throw new ApiError('PROJECT_CONFLICT', 'The active project changed while modeling', 409);
+      if (current.revision !== request.expectedRevision || digest(current) !== checked.snapshotHash)
+        throw new ApiError(
+          'REVISION_CONFLICT',
+          'The project changed while modeling; retry against the current revision',
+          409,
+        );
+      if (
+        (current.production?.activeSceneId ?? null) !== request.expectedContext.sceneId ||
+        (current.production?.activePerformanceId ?? null) !== request.expectedContext.performanceId
+      )
+        throw new ApiError('CONTEXT_CONFLICT', 'The active scene or performance changed while modeling', 409);
+      if (
+        response.project.id !== current.id ||
+        response.project.revision !== current.revision + 1 ||
+        response.results.length !== request.commands.length
+      )
+        throw new ApiError(
+          'MODELING_RESULT_MISMATCH',
+          'Modeling result does not match the validated transaction',
+          409,
+        );
+      // Only the private worker service supplies this result, validated on the identical immutable snapshot.
+      this.assertAssets(response.project);
+      const row = this.db.prepare('SELECT cursor FROM projects WHERE id=?').get(current.id) as {
+        cursor: number;
+      };
+      this.save(response.project, row.cursor);
+      this.db
+        .prepare('INSERT INTO requests(project_id,request_id,fingerprint,response) VALUES(?,?,?,?)')
+        .run(current.id, `modeling-job:${checked.jobId}`, checked.requestHash, JSON.stringify(response));
+      publish(response);
+      return response;
+    });
+    this.emit('project', result.project);
     return result;
   }
 

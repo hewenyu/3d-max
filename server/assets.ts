@@ -110,7 +110,7 @@ export async function importAssetFile(
   }
 }
 
-export async function validateModel(bytes: Buffer, extension: string, store: Store) {
+export async function validateModel(bytes: Buffer, extension: string, store: Pick<Store, 'assetByUrl'>) {
   let document: { buffers?: { uri?: string }[]; images?: { uri?: string }[]; asset?: { version?: string } };
   try {
     if (extension === '.glb') {

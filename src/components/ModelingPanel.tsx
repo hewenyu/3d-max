@@ -6,11 +6,16 @@ import { supportsMeshConversion } from '../../shared/modeling';
 import type { EditorActions } from '../useEditor';
 import { Field, IconButton, NumberInput, Section, TextInput, VectorInput } from './Controls';
 import { ModifierPanel } from './ModifierPanel';
+import { SurfacePanel } from './modeling/SurfacePanel';
+import { defaultSurface } from './modeling/surface-presets';
+import { TopologyPanel } from './modeling/TopologyPanel';
+import { ModelAssetsPanel } from './modeling/ModelAssetsPanel';
 
 interface Props {
   object: SceneObject;
   project: Project;
   editor: EditorActions;
+  sourceTime?: number;
 }
 function parameters(curve: CurveData) {
   return {
@@ -156,7 +161,7 @@ function MeshControls({
                   type: 'mesh.set',
                   payload: {
                     id: object.id,
-                    mesh: { vertices: current.vertices, faces: current.faces, smooth },
+                    mesh: { ...current, smooth },
                   },
                 },
               ];
@@ -520,8 +525,10 @@ function TerrainControls({
   );
 }
 
-export function ModelingPanel({ object, project, editor }: Props) {
-  const [createKind, setCreateKind] = useState<'mesh' | 'road' | 'tube' | 'terrain'>('mesh');
+export function ModelingPanel({ object, project, editor, sourceTime }: Props) {
+  const [createKind, setCreateKind] = useState<
+    'mesh' | 'road' | 'tube' | 'terrain' | 'surface-sweep' | 'surface-revolve' | 'surface-loft'
+  >('mesh');
   const [operandId, setOperandId] = useState('');
   const [operation, setOperation] = useState<'union' | 'subtract' | 'intersect'>('subtract');
   const [keepOperand, setKeepOperand] = useState(false);
@@ -531,6 +538,17 @@ export function ModelingPanel({ object, project, editor }: Props) {
   const modeling = object.modeling?.kind === 'stack' ? object.modeling.base : object.modeling;
   const create = () => {
     if (createKind === 'mesh') editor.run('mesh.convert', { id: object.id });
+    else if (
+      createKind === 'surface-sweep' ||
+      createKind === 'surface-revolve' ||
+      createKind === 'surface-loft'
+    )
+      editor.run('surface.set', {
+        id: object.id,
+        surface: defaultSurface(
+          createKind === 'surface-sweep' ? 'sweep' : createKind === 'surface-revolve' ? 'revolve' : 'loft',
+        ),
+      });
     else if (createKind === 'terrain')
       editor.run('terrain.set', {
         id: object.id,
@@ -568,6 +586,9 @@ export function ModelingPanel({ object, project, editor }: Props) {
             <option value="road">曲线路面</option>
             <option value="tube">曲线管线</option>
             <option value="terrain">高度地形</option>
+            <option value="surface-sweep">截面扫掠</option>
+            <option value="surface-revolve">旋转曲面</option>
+            <option value="surface-loft">多截面放样</option>
           </select>
         </Field>
         <button
@@ -583,9 +604,24 @@ export function ModelingPanel({ object, project, editor }: Props) {
               : '转换为网格'
             : '创建几何体'}
         </button>
-        <ModifierPanel object={object} editor={editor} />
+        <ModifierPanel object={object} project={project} editor={editor} />
+        {modeling?.kind === 'surface' && (
+          <SurfacePanel key={object.id + '-surface'} object={object} surface={modeling} editor={editor} />
+        )}
         {modeling?.kind === 'mesh' && (
-          <MeshControls key={object.id + '-mesh'} object={object} mesh={modeling} editor={editor} />
+          <>
+            <TopologyPanel
+              key={object.id + '-topology'}
+              object={object}
+              mesh={modeling}
+              project={project}
+              editor={editor}
+            />
+            <details className="topology-details">
+              <summary>基础网格编辑</summary>
+              <MeshControls key={object.id + '-mesh'} object={object} mesh={modeling} editor={editor} />
+            </details>
+          </>
         )}
         {modeling?.kind === 'curve' && (
           <CurveControls key={object.id + '-curve'} object={object} curve={modeling} editor={editor} />
@@ -644,6 +680,13 @@ export function ModelingPanel({ object, project, editor }: Props) {
           执行布尔
         </button>
       </fieldset>
+      <ModelAssetsPanel
+        key={object.id + '-assets'}
+        object={object}
+        project={project}
+        editor={editor}
+        sourceTime={sourceTime}
+      />
     </Section>
   );
 }

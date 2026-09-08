@@ -1,6 +1,9 @@
 import { z } from 'zod';
+import { topologyCommandDefinitions } from './topology-schema';
 import { meshModifierSchema, modifierCommandDefinitions } from './modifier-schema';
 import type { SceneObject } from './types';
+import { meshIdentitySchema, validateMeshIdentity } from './topology/identity';
+import { surfaceDataSchema, surfaceCommandDefinitions } from './surfaces/schema';
 
 export function supportsMeshConversion(object: Pick<SceneObject, 'type' | 'modeling'>): boolean {
   return Boolean(object.modeling) || ['box', 'sphere', 'cylinder', 'plane', 'wall'].includes(object.type);
@@ -31,9 +34,11 @@ export const meshDataSchema = z
     vertices: z.array(modelingVectorSchema).min(3).max(100000),
     faces: z.array(z.array(vertexIndex).min(3).max(256)).min(1).max(100000),
     smooth: z.boolean().default(false),
+    identity: meshIdentitySchema.optional(),
   })
   .strict()
   .superRefine((mesh, context) => {
+    validateMeshIdentity(mesh, context);
     let triangleCount = 0;
     mesh.faces.forEach((face, index) => {
       triangleCount += face.length - 2;
@@ -123,7 +128,12 @@ export const terrainDataSchema = z
       });
   });
 
-export const baseModelingSchema = z.union([meshDataSchema, curveDataSchema, terrainDataSchema]);
+export const baseModelingSchema = z.union([
+  meshDataSchema,
+  curveDataSchema,
+  terrainDataSchema,
+  surfaceDataSchema,
+]);
 export const modifierStackSchema = z
   .object({
     kind: z.literal('stack'),
@@ -143,6 +153,7 @@ export const modelingSchema = z.union([
   meshDataSchema,
   curveDataSchema,
   terrainDataSchema,
+  surfaceDataSchema,
   modifierStackSchema,
 ]);
 export type MeshData = z.infer<typeof meshDataSchema>;
@@ -156,13 +167,17 @@ const identifier = z.string().min(1).max(200);
 const target = z.object({ id: identifier }).strict();
 const meshInput = z
   .object({
+    kind: z.literal('mesh').optional(),
+    identity: meshIdentitySchema.optional(),
     vertices: z.array(modelingVectorSchema).min(3).max(100000),
     faces: z.array(z.array(vertexIndex).min(3).max(256)).min(1).max(100000),
     smooth: z.boolean().optional(),
   })
   .strict();
 export const modelingCommandDefinitions: { type: string; description: string; schema: z.AnyZodObject }[] = [
+  ...topologyCommandDefinitions,
   ...modifierCommandDefinitions,
+  ...surfaceCommandDefinitions,
   {
     type: 'mesh.convert',
     description:
@@ -309,5 +324,3 @@ export class ModelingError extends Error {
     super(message);
   }
 }
-
-export { applyModelingCommand } from './modeling-operations';

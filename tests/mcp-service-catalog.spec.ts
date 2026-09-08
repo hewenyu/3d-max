@@ -14,7 +14,11 @@ import type { SpeechCatalog, SpeechResult } from '../shared/speech';
 import type { TemplateContent, TemplateSummary } from '../shared/templates';
 import type { Command, CommandResponse, Project, RenderJob } from '../shared/types';
 import { skinnedModelAsset } from './fixtures/skinned-model';
-import { exerciseTransferCatalog, exerciseWorkspaceCatalog } from './fixtures/mcp-service-parity';
+import {
+  exerciseModelingCatalog,
+  exerciseTransferCatalog,
+  exerciseWorkspaceCatalog,
+} from './fixtures/mcp-service-parity';
 
 const exec = promisify(execFile);
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -100,6 +104,7 @@ test('every declared MCP service tool succeeds with real media, persistence and 
     expect(capabilities.commands.map((item: { type: string }) => item.type).sort()).toEqual(
       commandDefinitions.map((definition) => definition.type).sort(),
     );
+    evidence.modeling = await exerciseModelingCatalog(call);
     let project = await call<Project>('project_new', {
       name: `MCP service catalog ${Date.now()}`,
       template: 'empty',

@@ -61,6 +61,7 @@ export function useAppWorkspace(bindings: Bindings) {
         performanceId: project.production?.activePerformanceId ?? null,
       },
       selection: b.selected,
+      components: engine.components.getState(),
       view: b.mode,
       observation: engine.getObservation(),
       transport: {
@@ -96,7 +97,7 @@ export function useAppWorkspace(bindings: Bindings) {
       viewport: {
         width: size.width,
         height: size.height,
-        loading: render.loading,
+        loading: render.loading || engine.components.loading,
         sceneId: render.sceneId,
         performanceId: render.performanceId,
         workspace: render.workspace,
@@ -124,6 +125,15 @@ export function useAppWorkspace(bindings: Bindings) {
       await settleWorkspace();
     };
     switch (command.type) {
+      case 'components':
+        b.playback.setPlaying(false);
+        if (command.objectId) {
+          idsExist([command.objectId]);
+          b.chooseObject([command.objectId]);
+          await settleWorkspace();
+        }
+        await engine.components.apply(command);
+        break;
       case 'selection': {
         idsExist(command.ids);
         const ids =

@@ -16,7 +16,14 @@ import { validateProject } from './schema';
 import { commandDefinitions } from './command-definitions';
 import { retimeClip, splitClip, trimClip } from './time-map';
 import type { CameraTiming, ClipRetiming } from './types';
-import { applyModelingCommand, modelingCommandDefinitions } from './modeling';
+import { modelingCommandDefinitions } from './modeling';
+import { applyModelingCommand } from './modeling-operations';
+import {
+  captureModifierLocks,
+  protectModifierDeletion,
+  remapModifierReferences,
+  validateModifierLocks,
+} from './modifier-references';
 import { buildCameraMotion, type CameraMotion } from './camera-motion';
 import { applyProductionCommand, productionCommandDefinitions } from './production-commands';
 import { syncProduction } from './production';
@@ -103,6 +110,7 @@ function deleteObject(project: Project, objectId: unknown) {
   project.objects.filter((object) => removed.has(object.id)).forEach((object) => unlocked(object));
   for (const object of project.objects.filter((object) => !removed.has(object.id))) {
     protectActorTargets(object, removed);
+    protectModifierDeletion(object, removed);
     if (
       (object.attachment && removed.has(object.attachment.objectId)) ||
       object.keyframes.some((frame) => frame.attachment && removed.has(frame.attachment.objectId))
@@ -169,6 +177,7 @@ function duplicateObject(project: Project, payload: Record<string, unknown>): Sc
       clone.id = mapping.get(object.id)!;
       clone.locked = false;
       remapActorTargets(clone, mapping);
+      remapModifierReferences(clone, mapping);
       for (const event of clone.motionEvents ?? []) {
         event.id = id('event');
         if (event.otherId) event.otherId = mapping.get(event.otherId) ?? event.otherId;
@@ -571,6 +580,7 @@ function mutate(project: Project, command: Command): unknown {
 export function applyCommands(
   project: Project,
   commands: Command[],
+  onProgress?: (progress: { phase: 'computing' | 'validating'; completed: number; total: number }) => void,
 ): { project: Project; results: unknown[] } {
   if (!Array.isArray(commands) || commands.length === 0 || commands.length > 500)
     throw new DomainError('A transaction requires 1 to 500 commands');
@@ -583,10 +593,12 @@ export function applyCommands(
     const payload = definition.schema.parse(command.payload) as Record<string, unknown>;
     const synchronizationSnapshot = captureSynchronization(draft);
     const lightingSnapshot = captureLightingState(draft);
+    const modifierLocks = captureModifierLocks(draft);
     results.push(structuredClone(mutate(draft, { type: command.type, payload })));
     applySynchronization(draft, synchronizationSnapshot, synchronizationTransaction);
     syncProduction(draft);
     validateLightingLocks(lightingSnapshot, draft);
+    validateModifierLocks(draft, modifierLocks);
     const entityIds = [
       ...draft.objects,
       ...draft.cameras,
@@ -597,8 +609,10 @@ export function applyCommands(
       ...draft.notes,
     ].map((entity) => entity.id);
     if (new Set(entityIds).size !== entityIds.length) throw new DomainError('Duplicate entity ID');
+    onProgress?.({ phase: 'computing', completed: results.length, total: commands.length });
   }
   draft.revision = project.revision + 1;
   draft.updatedAt = new Date().toISOString();
+  onProgress?.({ phase: 'validating', completed: commands.length, total: commands.length });
   return { project: validateProject(draft), results };
 }

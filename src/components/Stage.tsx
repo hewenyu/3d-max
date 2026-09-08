@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { TopologyWorkspaceContext } from '../workspace/TopologyWorkspace';
 import type { Project, Shot } from '../../shared/types';
 import { SceneEngine } from '../engine/SceneEngine';
 import { sampleTimeline } from '../../shared/timeline';
@@ -31,6 +32,7 @@ export function Stage({
   editor: EditorActions;
   engineRef: React.RefObject<SceneEngine | null>;
 }) {
+  const topologyWorkspace = useContext(TopologyWorkspaceContext);
   const element = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onSelect, editor });
   callbacks.current = { onSelect, editor };
@@ -40,6 +42,8 @@ export function Stage({
     if (!element.current) return;
     const engine = new SceneEngine(element.current, {
       interactive: true,
+      onComponentTransform: (input) => callbacks.current.editor.run('topology.transform', input),
+      onError: (error) => callbacks.current.editor.setError(error.message),
       onSelect: (id, additive) => {
         const selected = state.current.selected;
         callbacks.current.onSelect(
@@ -80,11 +84,13 @@ export function Stage({
       },
     });
     engineRef.current = engine;
+    topologyWorkspace?.attach(engine.components);
     return () => {
+      topologyWorkspace?.attach(null);
       engine.dispose();
       engineRef.current = null;
     };
-  }, [engineRef]);
+  }, [engineRef, topologyWorkspace]);
   useEffect(() => {
     const engine = engineRef.current;
     let current = true;

@@ -8,7 +8,15 @@ const source = process.cwd();
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const target = resolve(process.argv[2] ?? `.data/releases/${stamp}`);
 await mkdir(target, { recursive: false });
-const directories = ['src', 'shared', 'server', 'tests', 'scripts'];
+const entries = await readdir(source);
+const directories = [
+  'src',
+  'shared',
+  'server',
+  'tests',
+  'scripts',
+  ...(entries.includes('public') ? ['public'] : []),
+];
 const files = [
   'package.json',
   'package-lock.json',
@@ -16,9 +24,8 @@ const files = [
   '.prettierignore',
   'tsconfig.json',
   'vite.config.ts',
-  'playwright.config.ts',
-  'playwright.production.config.ts',
-  ...(await readdir(source)).filter((name) => name.endsWith('.html')),
+  ...entries.filter((name) => /^playwright(?:\..+)?\.config\.ts$/.test(name)),
+  ...entries.filter((name) => name.endsWith('.html')),
 ];
 for (const path of [...directories, ...files])
   await cp(resolve(source, path), resolve(target, path), {

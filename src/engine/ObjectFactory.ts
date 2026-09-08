@@ -5,6 +5,8 @@ import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import type { SceneObject } from '../../shared/types';
 import { ActorRig } from './ActorRig';
 import { buildModelGeometry } from '../../shared/modeling-geometry';
+import { meshToGeometry } from '../../shared/mesh-geometry';
+import type { MeshData } from '../../shared/modeling';
 import type { MotionObject } from '../../shared/motion';
 import { VehicleRig } from './VehicleRig';
 import { EffectRig } from './EffectRig';
@@ -38,7 +40,10 @@ function mesh(
   return result;
 }
 
-export async function buildObject(object: SceneObject): Promise<BuiltObject> {
+export async function buildObject(
+  object: SceneObject,
+  evaluated?: MeshData | Promise<MeshData>,
+): Promise<BuiltObject> {
   const root = new THREE.Group();
   root.name = object.name;
   root.userData.entityId = object.id;
@@ -59,11 +64,24 @@ export async function buildObject(object: SceneObject): Promise<BuiltObject> {
     metalness: 0.015,
   });
   if (object.modeling) {
-    const geometry = buildModelGeometry(object.modeling);
-    material.flatShading =
-      (object.modeling.kind === 'mesh' || object.modeling.kind === 'stack') && !geometry.userData.smooth;
-    mesh(geometry, material, root);
-    return { root };
+    let geometry: THREE.BufferGeometry | undefined;
+    try {
+      // Allocate materials in project order before asynchronous geometry can change render sorting.
+      const resolved = evaluated ? await evaluated : undefined;
+      geometry = resolved ? meshToGeometry(resolved) : buildModelGeometry(object.modeling);
+      if (resolved) geometry.userData.smooth = resolved.smooth;
+      material.flatShading =
+        (object.modeling.kind === 'mesh' ||
+          object.modeling.kind === 'stack' ||
+          object.modeling.kind === 'surface') &&
+        !geometry.userData.smooth;
+      mesh(geometry, material, root);
+      return { root };
+    } catch (error) {
+      geometry?.dispose();
+      material.dispose();
+      throw error;
+    }
   }
   const dark = new THREE.MeshStandardMaterial({ color: '#818b87', roughness: 0.82 });
   const pale = new THREE.MeshStandardMaterial({ color: '#e8eae7', roughness: 0.95 });

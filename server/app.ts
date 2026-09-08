@@ -23,6 +23,9 @@ import { ReviewService } from './review-service.ts';
 import { createReviewApp, installReviewOwnerRoutes, reviewAddress } from './review-routes.ts';
 import { getWorkspaceService } from './workspace-service';
 import { installWorkspaceRoutes } from './workspace-routes';
+import { installModelingRoutes } from './modeling-routes';
+import { getModelingJobService } from './modeling-job-access';
+import type { ModelingJob } from '../shared/modeling-jobs';
 
 export function createApp(config: ServerConfig = getConfig()) {
   prepareDirectories(config);
@@ -30,6 +33,7 @@ export function createApp(config: ServerConfig = getConfig()) {
   const render = new RenderService(config, store);
   const reviews = new ReviewService(store, config);
   const workspaces = getWorkspaceService(store);
+  const modelingJobs = getModelingJobService(store, config);
   const review = reviewAddress(config);
   const app = express();
   app.disable('x-powered-by');
@@ -104,14 +108,18 @@ export function createApp(config: ServerConfig = getConfig()) {
     const onProject = (project: Project) =>
       response.write(`event: project\ndata: ${JSON.stringify(project)}\n\n`);
     const onRender = (job: RenderJob) => response.write(`event: render\ndata: ${JSON.stringify(job)}\n\n`);
+    const onModeling = (job: ModelingJob) =>
+      response.write(`event: modeling-job\ndata: ${JSON.stringify(job)}\n\n`);
     onProject(store.project());
     store.on('project', onProject);
     store.on('render', onRender);
+    store.on('modeling-job', onModeling);
     const heartbeat = setInterval(() => response.write(': keepalive\n\n'), 15000);
     request.on('close', () => {
       clearInterval(heartbeat);
       store.off('project', onProject);
       store.off('render', onRender);
+      store.off('modeling-job', onModeling);
     });
   });
   installAssetRoutes(app, config, store);
@@ -119,6 +127,7 @@ export function createApp(config: ServerConfig = getConfig()) {
   installTemplateRoutes(app, store);
   installReviewOwnerRoutes(app, reviews, review.url);
   installWorkspaceRoutes(app, workspaces);
+  installModelingRoutes(app, store, config);
   app.post('/api/preview', async (request, response) => response.json(await render.preview(request.body)));
   app.post('/api/viewport', async (request, response) => response.json(await render.viewport(request.body)));
   app.post('/api/constraints/inspect', async (request, response) =>
@@ -219,6 +228,7 @@ export function createApp(config: ServerConfig = getConfig()) {
     reviewApp: createReviewApp(reviews, review.url),
     async close() {
       workspaces.close();
+      await modelingJobs.close();
       await render.close();
       store.close();
     },

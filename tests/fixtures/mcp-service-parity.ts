@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { expect, type Page } from '@playwright/test';
 import type { Project } from '../../shared/types';
 import type { WorkspaceState } from '../../shared/workspace';
+export { exerciseModelingCatalog } from './modeling-service-cases';
 
 type Call = <T = any>(name: string, args?: Record<string, unknown>) => Promise<T>;
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
